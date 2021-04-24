@@ -1,8 +1,10 @@
 CFLAGS = -Wall -Wextra -Wpedantic -g -fsanitize=address -fsanitize=undefined 
 
-BIN = rii
+BIN = rr
 
-SRC = rii.c
+SRC = rr.c
+
+CC = gcc -std=c99
 
 all: 
-	gcc $(SRC) -o $(BIN) $(CFLAGS) -I ctl/ctl
+	$(CC) $(SRC) -o $(BIN) $(CFLAGS) -I ctl/ctl
