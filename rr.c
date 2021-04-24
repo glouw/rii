@@ -11,23 +11,7 @@ int line = 0;
 
 #define quit(...) printf("error: line %d: ", line), printf(__VA_ARGS__), exit(1)
 
-// ORDER DICTATES TYPE CONVERSION.
-#define TYPES \
-    X(I8)  \
-    X(U8)  \
-    X(I16) \
-    X(U16) \
-    X(I32) \
-    X(U32) \
-    X(I64) \
-    X(U64) \
-    X(F32) \
-    X(F64) \
-    X(OBJ) \
-    X(ARR) \
-    X(STR) \
-    X(BLN) \
-    X(NUL)
+#define TYPES X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) X(OBJ) X(ARR) X(STR) X(BLN) X(NUL)
 
 #define X(A) A,
 typedef enum { TYPES } Type;
