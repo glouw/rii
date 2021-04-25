@@ -7,11 +7,11 @@
 
 #include <str.h>
 
-int line = 0;
+int line = 1;
 
 #define quit(...) printf("error: line %d: ", line), printf(__VA_ARGS__), exit(1)
 
-#define TYPES X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) X(OBJ) X(ARR) X(STR) X(BLN) X(NUL)
+#define TYPES X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) X(OBJ) X(ARR) X(STR) X(BLN) X(BLK) X(REF) X(NUL)
 
 #define X(A) A,
 typedef enum { TYPES } Type;
@@ -58,11 +58,39 @@ Term(que_char*, set_Memb*);
 set_Memb
 Object(que_char*, set_Memb*);
 
+#define T str
+#include <vec.h>
+
+typedef struct
+{
+    str text;
+    vec_str args;
+}
+Blk;
+
+void
+Blk_Free(Blk* b)
+{
+    str_free(&b->text);
+    vec_str_free(&b->args);
+}
+
+Blk
+Blk_Copy(Blk* b)
+{
+    return (Blk) {
+        str_copy(&b->text),
+        vec_str_copy(&b->args),
+    };
+}
+
 typedef union
 {
     set_Memb obj;
     vec_Elem arr;
+    str ref;
     str str;
+    Blk blk;
     uint8_t u8;
     uint16_t u16;
     uint32_t u32;
@@ -103,7 +131,9 @@ Elem_free(Elem* e)
     case OBJ: set_Memb_free(&poly.obj); break;
     case ARR: vec_Elem_free(&poly.arr); break;
     case STR: str_free(&poly.str); break;
-    default: // OKAY, TYPES ARE POD.
+    case BLK: Blk_Free(&poly.blk); break;
+    case REF: str_free(&poly.ref); break;
+    default: // POD.
         break;
     }
     free(*e);
@@ -121,7 +151,9 @@ Elem_copy(Elem* e)
     case OBJ: copy->poly.obj = set_Memb_copy(&poly.obj); break;
     case ARR: copy->poly.arr = vec_Elem_copy(&poly.arr); break;
     case STR: copy->poly.str = str_copy(&poly.str); break;
-    default: // OKAY, TYPES ARE POD.
+    case BLK: copy->poly.blk = Blk_Copy(&poly.blk); break;
+    case REF: copy->poly.ref = str_copy(&poly.ref); break;
+    default: // POD.
         copy->poly = poly;
         break;
     }
@@ -175,19 +207,21 @@ Elem_write(Elem e, int tabs)
         Tabs(tabs);
         putchar(']');
         break;
-    case STR: printf("<str> %s", e->poly.str.value); break;
-    case BLN: printf("<bln> %s", e->poly.bln ? "true" : "false"); break;
-    case NUL: printf("<nul> null"); break;
-    case F64: printf("<f64> %lf", e->poly.f64); break;
-    case F32: printf("<f32> %f",  e->poly.f32); break;
-    case I64: printf("<i64> %ld", e->poly.i64); break;
-    case I32: printf("<i32> %d",  e->poly.i32); break;
-    case I16: printf("<i16> %d",  e->poly.i16); break;
-    case  I8: printf("<i8 > %d",  e->poly.i8);  break;
-    case U64: printf("<u64> %lu", e->poly.u64); break;
-    case U32: printf("<u32> %u",  e->poly.u32); break;
-    case U16: printf("<u16> %u",  e->poly.u16); break;
-    case  U8: printf("<u8 > %u",  e->poly.u8);  break;
+    case STR: printf("|str| %s", e->poly.str.value); break;
+    case REF: printf("|ref| %s", e->poly.ref.value); break;
+    case BLN: printf("|bln| %s", e->poly.bln ? "true" : "false"); break;
+    case NUL: printf("|nul| null"); break;
+    case F64: printf("|f64| %lf", e->poly.f64); break;
+    case F32: printf("|f32| %f",  e->poly.f32); break;
+    case I64: printf("|i64| %ld", e->poly.i64); break;
+    case I32: printf("|i32| %d",  e->poly.i32); break;
+    case I16: printf("|i16| %d",  e->poly.i16); break;
+    case  I8: printf("|i8 | %d",  e->poly.i8);  break;
+    case U64: printf("|u64| %lu", e->poly.u64); break;
+    case U32: printf("|u32| %u",  e->poly.u32); break;
+    case U16: printf("|u16| %u",  e->poly.u16); break;
+    case  U8: printf("|u8 | %u",  e->poly.u8);  break;
+    case BLK: break;
     }
 }
 
@@ -341,10 +375,10 @@ Array(que_char* q, set_Memb* idents)
 }
 
 Type
-CastType(que_char* q)
+CastType(que_char* q, char l, char r)
 {
     Type type = { 0 };
-    Match(q, '<');
+    Match(q, l);
     str t = Read(q, IsIdent);
     if(Equal(&t, "u8"))  type =  U8; else
     if(Equal(&t, "u16")) type = U16; else
@@ -355,8 +389,8 @@ CastType(que_char* q)
     if(Equal(&t, "i32")) type = I32; else
     if(Equal(&t, "i64")) type = I64; else
     if(Equal(&t, "f32")) type = F32; else
-    if(Equal(&t, "f64")) type = F64; else quit("type '%s' not supported\n", t.value);
-    Match(q, '>');
+    if(Equal(&t, "f64")) type = F64; else quit("casting to type '%s' not supported\n", t.value);
+    Match(q, r);
     str_free(&t);
     return type;
 }
@@ -387,20 +421,60 @@ Poly_Basic(que_char* q, Type t)
 Elem
 Value(que_char* q)
 {
-    Type t = (Next(q) == '<') ? CastType(q) : F64;
+    Type t = (Next(q) == '|') ? CastType(q, '|', '|') : F64;
     Poly p = Poly_Basic(q, t);
     return Elem_Init(t, p);
+}
+
+set_Memb_node*
+Node(set_Memb* idents, str* s)
+{
+    return set_Memb_find(idents, (Memb) { .str = *s });
+}
+
+set_Memb_node*
+Find(set_Memb* idents, str* s)
+{
+    set_Memb_node* node = Node(idents, s);
+    if(node == NULL)
+        quit("identifier '%s' not defined\n", s->value);
+    return node;
+}
+
+void
+Erase(set_Memb* idents, str* s)
+{
+    set_Memb_erase(idents, (Memb) { .str = *s });
+}
+
+void
+Dupe(set_Memb* idents, str* s)
+{
+    if(Node(idents, s))
+        quit("identifier '%s' already defined\n", s->value);
+}
+
+Elem
+GetByRef(set_Memb* idents, str* s)
+{
+    set_Memb_node* node = Find(idents, s);
+    return node->key.elem;
+}
+
+Elem
+GetByVal(set_Memb* idents, str* s)
+{
+    Elem e = GetByRef(idents, s);
+    return Elem_copy(&e);
 }
 
 Elem
 Ident(que_char* q, set_Memb* idents)
 {
     str s = Read(q, IsIdent);
-    set_Memb_node* node = set_Memb_find(idents, (Memb) { .str = s });
-    if(node == NULL)
-        quit("identifier '%s' not defined\n", s.value);
+    Elem e = GetByVal(idents, &s);
     str_free(&s);
-    return Elem_copy(&node->key.elem);
+    return e;
 }
 
 Elem
@@ -447,38 +521,6 @@ Parn(que_char* q, set_Memb* idents)
     Elem a = Expression(q, idents);
     Match(q, ')');
     return a;
-}
-
-Elem
-Factor(que_char* q, set_Memb* idents)
-{
-    return (Next(q) == '(') ? Parn(q, idents) : Term(q, idents);
-}
-
-void
-vec_Elem_zip(vec_Elem* a, vec_Elem* b, void Op(Elem, Elem))
-{
-    if(a->size != b->size)
-        quit("array size mismatch - sizes were '%lu' and '%lu'", a->size, b->size);
-    vec_Elem_it ia = vec_Elem_it_each(a);
-    vec_Elem_it ib = vec_Elem_it_each(b);
-    while(!ia.done && !ib.done)
-    {
-        Op(*ia.ref, *ib.ref);
-        ia.step(&ia);
-        ib.step(&ib);
-    }
-}
-
-void
-set_Memb_zip(set_Memb* a, set_Memb* b, void Op(Elem, Elem))
-{
-    foreach(set_Memb, b, it)
-    {
-        set_Memb_node* node = set_Memb_find(a, (Memb) { .str = it.ref->str });
-        if(node)
-            Op(node->key.elem, it.ref->elem);
-    }
 }
 
 #define TABLE_CAST(A, TYPE) \
@@ -537,6 +579,42 @@ Cast(Elem e, Type t)
     }
 }
 
+Elem
+Factor(que_char* q, set_Memb* idents)
+{
+    Type t = (Next(q) == '<') ? CastType(q, '<', '>') : NUL;
+    Elem e = (Next(q) == '(') ? Parn(q, idents) : Term(q, idents);
+    if(t != NUL)
+        Cast(e, t);
+    return e;
+}
+
+void
+vec_Elem_zip(vec_Elem* a, vec_Elem* b, void Op(Elem, Elem))
+{
+    if(a->size != b->size)
+        quit("array size mismatch - sizes were '%lu' and '%lu'", a->size, b->size);
+    vec_Elem_it ia = vec_Elem_it_each(a);
+    vec_Elem_it ib = vec_Elem_it_each(b);
+    while(!ia.done && !ib.done)
+    {
+        Op(*ia.ref, *ib.ref);
+        ia.step(&ia);
+        ib.step(&ib);
+    }
+}
+
+void
+set_Memb_zip(set_Memb* a, set_Memb* b, void Op(Elem, Elem))
+{
+    foreach(set_Memb, b, it)
+    {
+        set_Memb_node* node = set_Memb_find(a, (Memb) { .str = it.ref->str });
+        if(node)
+            Op(node->key.elem, it.ref->elem);
+    }
+}
+
 void
 Check(Elem a, Elem b)
 {
@@ -569,7 +647,9 @@ Mul(Elem a, Elem b)
     case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Mul); break; 
     case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul); break; 
     case STR:
+    case REF:
     case BLN:
+    case BLK:
     case NUL:
         quit("mul (*) not supported for '%s'\n", TypeStr[a->type]); 
         break; 
@@ -586,7 +666,9 @@ Div(Elem a, Elem b)
     case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Div); break; 
     case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Div); break; 
     case STR:
+    case REF: 
     case BLN: 
+    case BLK: 
     case NUL:
         quit("div (/) not supported for '%s'\n", TypeStr[a->type]); 
         break; 
@@ -603,7 +685,9 @@ Add(Elem a, Elem b)
     case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
     case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
     case STR: str_append(&a->poly.str, str_c_str(&b->poly.str)); break; 
+    case REF:
     case BLN:
+    case BLK:
     case NUL:
         quit("add (+) not supported for '%s'\n", TypeStr[a->type]); 
         break; 
@@ -620,10 +704,23 @@ Sub(Elem a, Elem b)
     case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Sub); break; 
     case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub); break; 
     case STR:
+    case REF:
     case BLN:
+    case BLK:
     case NUL:
         quit("sub (-) not supported for '%s'\n", TypeStr[a->type]); 
         break; 
+    }
+}
+
+void
+Deref(Elem* e, set_Memb* idents)
+{
+    while((*e)->type == REF) // Refs of refs of refs... Depends how many functions deep.
+    {
+        Elem n = GetByVal(idents, &(*e)->poly.ref);
+        Elem_free(e);
+        *e = n;
     }
 }
 
@@ -631,6 +728,7 @@ Elem
 Term(que_char* q, set_Memb* idents)
 {
     Elem a = Element(q, idents);
+    Deref(&a, idents);
     while(true)
     {
         char n = Next(q);
@@ -638,6 +736,7 @@ Term(que_char* q, set_Memb* idents)
         {
             Match(q, '*');
             Elem b = Factor(q, idents);
+            Deref(&b, idents);
             Mul(a, b);
             Elem_free(&b);
         }
@@ -646,6 +745,7 @@ Term(que_char* q, set_Memb* idents)
         {
             Match(q, '/');
             Elem b = Factor(q, idents);
+            Deref(&b, idents);
             Div(a, b);
             Elem_free(&b);
         }
@@ -659,6 +759,7 @@ Elem
 Expression(que_char* q, set_Memb* idents)
 {
     Elem a = Factor(q, idents);
+    Deref(&a, idents);
     while(true)
     {
         char n = Next(q);
@@ -666,6 +767,7 @@ Expression(que_char* q, set_Memb* idents)
         {
             Match(q, '+');
             Elem b = Element(q, idents);
+            Deref(&b, idents);
             Add(a, b);
             Elem_free(&b);
         }
@@ -674,6 +776,7 @@ Expression(que_char* q, set_Memb* idents)
         {
             Match(q, '-');
             Elem b = Element(q, idents);
+            Deref(&b, idents);
             Sub(a, b);
             Elem_free(&b);
         }
@@ -683,13 +786,65 @@ Expression(que_char* q, set_Memb* idents)
     return a;
 }
 
+str
+ReadBlock(que_char* q)
+{
+    int open = 1;
+    str s = str_init("");
+    Match(q, '{');
+    while(open > 0)
+    {
+        char n = *que_char_front(q);
+        if(n == '{')
+            open += 1;
+        else
+        if(n == '}')
+            open -= 1;
+        str_push_back(&s, n);
+        Pop(q);
+    }
+    str_pop_back(&s); // Pop '}'
+    return s;
+}
+
+Elem
+Fun(que_char* q)
+{
+    vec_str args = vec_str_init();
+    Match(q, '(');
+    if(Next(q) != ')')
+        while(true)
+        {
+            str ident = Read(q, IsIdent);
+            vec_str_push_back(&args, ident);
+            if(Next(q) == ',')
+                Match(q, ',');
+            else
+                break;
+        }
+    Match(q, ')');
+    Match(q, '=');
+    str b = ReadBlock(q);
+    Blk blk = { .text = b, .args = args };
+    return Elem_Init(BLK, (Poly) { .blk = blk });
+}
+
 void
 Let(que_char* q, set_Memb* idents)
 {
+    Elem elem = { 0 };
     str s = Read(q, IsIdent);
-    Match(q, '=');
-    Elem e = Expression(q, idents);
-    set_Memb_insert(idents, (Memb) { s, e });
+    Dupe(idents, &s);
+    char n = Next(q);
+    if(n == '(')
+        elem = Fun(q);
+    else
+    if(n == '=')
+    {
+        Match(q, '=');
+        elem = Expression(q, idents);
+    }
+    set_Memb_insert(idents, (Memb) { s, elem });
     Match(q, ';');
 }
 
@@ -708,23 +863,85 @@ Setup(void)
     return idents;
 }
 
+void Eval(const char*, set_Memb*);
+
+void
+Call(que_char* q, set_Memb* idents, str* s)
+{
+    set_Memb old = set_Memb_copy(idents);
+    Elem e = GetByVal(idents, s); // Copy, okay to modify arg list.
+    if(e->type != BLK)
+        quit("type '%s' cannot be called\n", TypeStr[e->type]);
+    Match(q, '(');
+    int args = 0;
+    if(Next(q) != ')')
+        foreach(vec_str, &e->poly.blk.args, it)
+        {
+            str real = Read(q, IsIdent);
+            args += 1;
+            Find(idents, &real); // Ensure existence.
+            Memb m = { str_copy(it.ref), Elem_Init(REF, (Poly) { .ref = real }) };
+            set_Memb_insert(idents, m);
+            if(Next(q) == ',')
+                Match(q, ',');
+            else
+                break;
+        }
+    int expect = e->poly.blk.args.size;
+    if(args != expect)
+        quit("expected '%d' args, got '%d' args", expect, args);
+    Match(q, ')');
+    Match(q, ';');
+    Eval(e->poly.blk.text.value, idents);
+
+    // Stack cleanup.
+    set_Memb diff = set_Memb_difference(idents, &old);
+    foreach(set_Memb, &diff, it)
+    {
+        printf("%s = ", it.ref->str.value);
+        Elem_print(it.ref->elem);
+        Erase(idents, &it.ref->str);
+    }
+    set_Memb_free(&old);
+    set_Memb_free(&diff);
+    Elem_free(&e); // This was a block copy - needs to free.
+    // Discards value for now - must return computed value one day.
+}
+
+void
+Statement(que_char* q, set_Memb* idents)
+{
+    str action = Read(q, IsIdent);
+    if(Equal(&action, "let"))
+        Let(q, idents);
+    else
+        Call(q, idents, &action);
+    str_free(&action);
+}
+
+void
+Body(que_char* q, set_Memb* idents)
+{
+    while(que_char_empty(q) == false)
+    {
+        Statement(q, idents);
+        Spin(q);
+    }
+}
+
+void
+Eval(const char* code, set_Memb* idents)
+{
+    que_char q = Queue(code);
+    Body(&q, idents);
+    que_char_free(&q);
+}
+
 void
 Execute(const char* code)
 {
     set_Memb idents = Setup();
-    que_char q = Queue(code);
-    while(que_char_empty(&q) == false)
-    {
-        str action = Read(&q, IsIdent);
-        if(Equal(&action, "let"))
-            Let(&q, &idents);
-        str_free(&action);
-        Spin(&q);
-    }
-    puts("PRINTING GLOBALS");
-    foreach(set_Memb, &idents, it)
-        Elem_print(it.ref->elem);
-    que_char_free(&q);
+    Eval(code, &idents);
     set_Memb_free(&idents);
 }
 
@@ -732,24 +949,24 @@ int
 main(void)
 {
     Execute(
-        "let Z = { \"list\" :"
-                "[<f64> 1, <i32> 1, <i32> 2, <i32> 3]"
-              "+ [<i64> 2,  <u8> 1,  <u8> 2,  <u8> 3] };"
-        "let thing = true;"
-        "let array = ["
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128,"
-            "<u32> 128"
-        "];"
+        "let a = {"
+            "\"list\" : ["
+                "|u32| 1, |f32| 2, |f64| 3, |i16| 4"
+            "]"
+        "};"
+        "let f(A, B, C, D) = {"
+            "let aa = A + B + C + D + a;"
+            "let test(AA, BB, CC, DD) = {"
+                "let other = AA + BB + CC + DD + a + a;"
+                "let deeper(AAA, BBB, CCC, DDD) = {"
+                    "let final = AAA + BBB + CCC + DDD + a + a + a;"
+                "};"
+                "deeper(AA, BB, CC, DD);"
+            "};"
+            "test(A, B, C, D);"
+        "};"
+        "f(a, a, a, a);"
+        "let b = a;"
+        "let aa = a;"
     );
 }
