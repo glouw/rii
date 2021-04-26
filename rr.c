@@ -92,6 +92,7 @@ typedef struct
 {
     str text;
     vec_str params;
+    set_Memb captured;
 }
 Blk;
 
@@ -134,6 +135,7 @@ Blk_Free(Blk* b)
 {
     str_free(&b->text);
     vec_str_free(&b->params);
+    set_Memb_free(&b->captured);
 }
 
 Blk
@@ -142,7 +144,14 @@ Blk_Copy(Blk* b)
     return (Blk) {
         str_copy(&b->text),
         vec_str_copy(&b->params),
+        set_Memb_copy(&b->captured),
     };
+}
+
+Blk
+Blk_Init(str text, vec_str params, set_Memb captured)
+{
+    return (Blk) { text, params, captured };
 }
 
 Elem
@@ -736,7 +745,6 @@ Deref(Elem* e, set_Memb* idents)
 {
     while((*e)->type == REF) // DEPENDS HOW MANY FUNCTIONS DEEP.
     {
-        puts("DEREF");
         Elem n = GetByVal(idents, &(*e)->poly.ref);
         Elem_free(e);
         *e = n;
@@ -846,12 +854,13 @@ DeclParams(que_char* q)
 }
 
 Elem
-Lambda(que_char* q)
+Lambda(que_char* q, set_Memb* idents)
 {
     vec_str params = DeclParams(q);
     Match(q, '=');
     str b = ReadBlock(q);
-    Blk blk = { .text = b, .params = params };
+    set_Memb c = set_Memb_copy(idents);
+    Blk blk = Blk_Init(b, params, c);
     return Elem_Init(BLK, (Poly) { .blk = blk });
 }
 
@@ -930,7 +939,7 @@ Assign(que_char* q, set_Memb* idents)
     Elem elem = { 0 };
     char n = Next(q);
     if(n == '(')
-        elem = Lambda(q);
+        elem = Lambda(q, idents);
     else
     if(n == '=')
     {
@@ -1012,13 +1021,11 @@ int
 main(void)
 {
     Execute(
-        "let set(value) = {"
-            "a = [2,3,4];"
-        "};"
+        "let global = 1.0;"
         "let main() = {"
-            "let a = [1,2,3];"
-            "set(a);"
+            "let b = 1.0;"
         "};"
+        "let a = 1.0;"
         "main();"
     );
 }
