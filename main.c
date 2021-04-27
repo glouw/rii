@@ -66,7 +66,7 @@ typedef union
 {
     set_Memb obj;
     vec_Elem arr;
-    str ref;
+    Elem* ref;
     str str;
     vec_str fun;
     double f64;
@@ -102,11 +102,18 @@ Elem_free(Elem* e)
     Poly poly = (*e)->poly;
     switch(type)
     {
-    case OBJ: set_Memb_free(&poly.obj); break;
-    case ARR: vec_Elem_free(&poly.arr); break;
-    case REF: str_free(&poly.ref); break;
-    case STR: str_free(&poly.str); break;
-    case FUN: vec_str_free(&poly.fun); break;
+    case OBJ:
+        set_Memb_free(&poly.obj);
+        break;
+    case ARR:
+        vec_Elem_free(&poly.arr);
+        break;
+    case STR:
+        str_free(&poly.str);
+        break;
+    case FUN:
+        vec_str_free(&poly.fun);
+        break;
     default:
         break;
     }
@@ -122,11 +129,18 @@ Elem_copy(Elem* e)
     copy->type = type;
     switch(type)
     {
-    case OBJ: copy->poly.obj = set_Memb_copy(&poly.obj); break;
-    case ARR: copy->poly.arr = vec_Elem_copy(&poly.arr); break;
-    case REF: copy->poly.ref = str_copy(&poly.ref); break;
-    case STR: copy->poly.str = str_copy(&poly.str); break;
-    case FUN: copy->poly.fun = vec_str_copy(&poly.fun); break;
+    case OBJ:
+        copy->poly.obj = set_Memb_copy(&poly.obj);
+        break;
+    case ARR:
+        copy->poly.arr = vec_Elem_copy(&poly.arr);
+        break;
+    case STR:
+        copy->poly.str = str_copy(&poly.str);
+        break;
+    case FUN:
+        copy->poly.fun = vec_str_copy(&poly.fun);
+        break;
     default:
         copy->poly = poly;
         break;
@@ -328,19 +342,10 @@ Params(deq_char* q)
     return p;
 }
 
-void
-Fun(deq_char* q)
-{
-    str f = Read(q, IsIdent);
-    vec_str p = Params(q);
-    vec_str_push_back(&p, DefBlock(q));
-    set_Memb_insert(&db, Memb_Init(f, Elem_Init(FUN, (Poly) { .fun = p })));
-}
-
 str
-Namespace(str* s)
+Prefix(str* s, str* with)
 {
-    str n = str_copy(&namespace);
+    str n = str_copy(with);
     str_append(&n, ".");
     str_append(&n, s->value);
     return n;
@@ -349,14 +354,23 @@ Namespace(str* s)
 void
 Insert(str* s, Elem e)
 {
-    str n = Namespace(s);
+    str n = Prefix(s, &namespace);
     set_Memb_insert(&db, Memb_Init(n, e));
+}
+
+void
+Fun(deq_char* q)
+{
+    str f = Read(q, IsIdent);
+    vec_str p = Params(q);
+    vec_str_push_back(&p, DefBlock(q));
+    set_Memb_insert(&db, Memb_Init(f, Elem_Init(FUN, (Poly) { .fun = p }))); // COULD USE INSERT?
 }
 
 set_Memb_node*
 Find(str* s)
 {
-    str n = Namespace(s);
+    str n = Prefix(s, &namespace);
     set_Memb_node* local = set_Memb_find(&db, (Memb) { .str = n });
     str_free(&n);
     if(local)
@@ -379,6 +393,15 @@ Exists(str* s)
     return node;
 }
 
+Elem*
+Deref(Elem e)
+{
+    Elem* other = e->poly.ref;
+    while((*other)->type == REF)
+        other = (*other)->poly.ref;
+    return other;
+}
+
 Elem
 Ident(deq_char* q)
 {
@@ -386,8 +409,6 @@ Ident(deq_char* q)
     if(Next(q) == '(')
     {
         vec_str p = Params(q);
-        foreach(vec_str, &p, it)
-            puts(it.ref->value);
         Elem e = Call(&s, &p);
         vec_str_free(&p);
         str_free(&s);
@@ -395,7 +416,10 @@ Ident(deq_char* q)
     }
     else
     {
-        Elem e = Elem_copy(&Exists(&s)->key.elem);
+        Elem* ee = &Exists(&s)->key.elem;
+        if((*ee)->type == REF)
+            ee = Deref(*ee);
+        Elem e = Elem_copy(ee);
         str_free(&s);
         return e;
     }
@@ -416,7 +440,10 @@ LoadType(deq_char* q, char l, char r)
     Type type = { 0 };
     Match(q, l);
     str t = Read(q, IsIdent);
-    if(Equal(&t, "f64")) type = F64; else quit("casting to type '%s' not supported\n", t.value);
+    if(Equal(&t, "f64"))
+        type = F64;
+    else
+        quit("casting to type '%s' not supported\n", t.value);
     Match(q, r);
     str_free(&t);
     return type;
@@ -430,7 +457,9 @@ Load(deq_char* q, Type t)
     switch(t)
     {
     default:
-    case F64: p.f64 = strtod(s.value, NULL); break;
+    case F64:
+        p.f64 = strtod(s.value, NULL);
+        break;
     }
     str_free(&s);
     return p;
@@ -557,14 +586,21 @@ Mul(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Mul); break; 
-    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul); break; 
-    case F64: a->poly.f64 *= b->poly.f64; break;
+    case ARR:
+        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Mul);
+        break; 
+    case OBJ:
+        set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul);
+        break; 
+    case F64:
+        a->poly.f64 *= b->poly.f64;
+        break;
     case STR:
     case FUN:
     case NUL:
     case REF:
-        quit("mul (*) not supported for types `%s` and `%s`\n", TypeStr[a->type], TypeStr[b->type]); 
+        quit("mul (*) not supported for types `%s` and `%s`\n",
+                TypeStr[a->type], TypeStr[b->type]); 
         break; 
     }
 }
@@ -575,14 +611,21 @@ Div(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Div); break; 
-    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Div); break; 
-    case F64: a->poly.f64 /= b->poly.f64; break;
+    case ARR:
+        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Div);
+        break; 
+    case OBJ:
+        set_Memb_zip(&a->poly.obj, &b->poly.obj, Div);
+        break; 
+    case F64:
+        a->poly.f64 /= b->poly.f64;
+        break;
     case STR:
     case FUN:
     case NUL:
     case REF: 
-        quit("div (/) not supported for types `%s` and `%s`\n", TypeStr[a->type], TypeStr[b->type]); 
+        quit("div (/) not supported for types `%s` and `%s`\n",
+                TypeStr[a->type], TypeStr[b->type]); 
         break; 
     }
 }
@@ -593,14 +636,23 @@ Add(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
-    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
-    case STR: str_append(&a->poly.str, str_c_str(&b->poly.str)); break; 
-    case F64: a->poly.f64 += b->poly.f64; break;
+    case ARR:
+        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add);
+        break; 
+    case OBJ:
+        set_Memb_zip(&a->poly.obj, &b->poly.obj, Add);
+        break; 
+    case STR:
+        str_append(&a->poly.str, str_c_str(&b->poly.str));
+        break; 
+    case F64:
+        a->poly.f64 += b->poly.f64;
+        break;
     case FUN:
     case NUL:
     case REF:
-        quit("add (+) not supported for types `%s` and `%s`\n", TypeStr[a->type], TypeStr[b->type]); 
+        quit("add (+) not supported for types `%s` and `%s`\n",
+                TypeStr[a->type], TypeStr[b->type]); 
         break; 
     }
 }
@@ -611,14 +663,21 @@ Sub(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Sub); break; 
-    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub); break; 
-    case F64: a->poly.f64 -= b->poly.f64; break;
+    case ARR:
+        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Sub);
+        break; 
+    case OBJ:
+        set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub);
+        break; 
+    case F64:
+        a->poly.f64 -= b->poly.f64;
+        break;
     case STR:
     case FUN:
     case NUL:
     case REF:
-        quit("sub (-) not supported for types `%s` and `%s`\n", TypeStr[a->type], TypeStr[b->type]); 
+        quit("sub (-) not supported for types `%s` and `%s`\n",
+                TypeStr[a->type], TypeStr[b->type]); 
         break; 
     }
 }
@@ -726,11 +785,22 @@ Elem_write(Elem e, int tabs)
         Tabs(tabs);
         putchar(']');
         break;
-    case STR: printf("|str| %s", e->poly.str.value); break;
-    case REF: printf("|ref| %s", e->poly.ref.value); break;
-    case NUL: printf("|null| null"); break;
-    case F64: printf("|f64| %lf", e->poly.f64); break;
-    case FUN: printf("|fun|"); break;
+    case STR:
+        printf("|str| \"%s\"", e->poly.str.value);
+        break;
+    case REF:
+        printf("|ref| %p ", (void*) *e->poly.ref);
+        Elem_write(*e->poly.ref, 0);
+        break;
+    case NUL:
+        printf("|null| null");
+        break;
+    case F64:
+        printf("|f64| %lf", e->poly.f64);
+        break;
+    case FUN:
+        printf("|fun|");
+        break;
     }
 }
 
@@ -742,6 +812,50 @@ Elem_print(Elem e)
 }
 
 void
+Assign(deq_char* q, str* n)
+{
+    Match(q, '=');
+    Elem e = Expression(q);
+    set_Memb_node* node = Find(n);
+    if(node && node->key.elem->type == REF)
+    {
+        // DEREFERENCE.
+        //
+        // foo(A)
+        // {
+        //     A = 0;
+        // }
+        //
+        // main()
+        // {
+        //     a = 1;
+        //     foo(a);
+        // }
+
+        Elem* d = Deref(node->key.elem);
+        Elem_free(d);
+        *d = e;
+    }
+    else
+    {
+        // ASSIGN OR UPDATE.
+        //
+        // main()
+        // {
+        //     a = 88; # SEE POINT 1.
+        //     a = 99; # SEE POINT 1 AND 2.
+        // }
+
+        // POINT 1.
+        if(node)
+            Erase(n);
+
+        // POINT 2.
+        Insert(n, e);
+    }
+}
+
+void
 Block(deq_char* q)
 {
     set_Memb old = set_Memb_copy(&db);
@@ -750,21 +864,14 @@ Block(deq_char* q)
     {
         str n = Read(q, IsIdent);
         if(Next(q) == '=')
-        {
-            Match(q, '=');
-            Elem e = Expression(q);
-            if(Find(&n))
-                Erase(&n);
-            Insert(&n, e);
-            Match(q, ';');
-        }
+            Assign(q, &n);
         else
         {
             Requeue(q, &n);
             Elem e = Expression(q);
             Elem_free(&e);
-            Match(q, ';');
         }
+        Match(q, ';');
         str_free(&n);
     }
     Match(q, '}');
@@ -773,8 +880,9 @@ Block(deq_char* q)
     {
         printf("FREE %s: ", it.ref->str.value);
         Elem_print(it.ref->elem);
-        Erase(&it.ref->str);
     }
+    foreach(set_Memb, &diff, it)
+        Erase(&it.ref->str);
     set_Memb_free(&old);
     set_Memb_free(&diff);
 }
@@ -803,12 +911,21 @@ Call(str* s, vec_str* args)
     int exp = Arguments(elem);
     int got = args->size;
     if(got != exp)
-        quit("function `%s()` size mismatch: got %d args, expected %d args\n", s->value, got, exp);
+        quit("function `%s()` got %d args but expected %d\n", s->value, got, exp);
     deq_char q = Queue(Code(elem));
     str new = str_copy(s);
-    str_swap(&namespace, &new);
-    Block(&q);
-    str_swap(&namespace, &new);
+    Elem* elems[got];
+    {
+        int index = 0;
+        foreach(vec_str, args, it)
+            elems[index++] = &Exists(it.ref)->key.elem;
+    }{
+        str_swap(&namespace, &new);
+        for(int i = 0; i < got; i++)
+            Insert(&elem->poly.fun.value[i], Elem_Init(REF, (Poly) { .ref = elems[i] }));
+        Block(&q);
+        str_swap(&namespace, &new);
+    }
     deq_char_free(&q);
     str_free(&new);
     static Poly zero;
@@ -820,23 +937,27 @@ main(void)
 {
     namespace = str_init("");
     const char* code =
-        "fun(A)"
+        "baz(A, B, C)"
         "{"
-            "A = 0;"
+            "A = A + A + [2, 3, 4];"
         "}"
 
-        "test()"
+        "foo(A, B, C)"
         "{"
-            "a = 2;"
+            "baz(A, B, C);"
+        "}"
+
+        "bar(A, B, C)"
+        "{"
+            "foo(A, B, C);"
         "}"
 
         "main()"
         "{"
-            "a = 1;"
+            "a = [1, 2, 3];"
             "b = 2;"
             "c = 3;"
-            "test();"
-            "fun(a);"
+            "bar(a, b, c);"
         "}";
     deq_char q = Queue(code);
     db = set_Memb_init(Memb_Compare);
