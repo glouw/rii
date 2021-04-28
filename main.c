@@ -9,7 +9,7 @@
 #define T char
 #include <deq.h>
 
-int line = 1;
+int line;
 
 str namespace;
 
@@ -1056,6 +1056,7 @@ Run(int argc, char* argv[], const char* code)
 void
 Setup(void)
 {
+    line = 1;
     namespace = str_init("");
     db = set_Memb_init(Memb_Compare);
 }
@@ -1072,6 +1073,7 @@ main(int argc, char* argv[])
 {
     Setup();
     int ret = Run(argc, argv,
+        "GLOBAL := \"test\";"
         "add(a, b) { ret a + b; }"
         "sub(a, b) { ret a - b; }"
         "mul(a, b) { ret a * b; }"

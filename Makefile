@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wextra -Wpedantic -g -fsanitize=address -fsanitize=undefined 
+CFLAGS = -Wall -Wextra -Wpedantic -g #-fsanitize=address -fsanitize=undefined 
 
 BIN = rr
 
