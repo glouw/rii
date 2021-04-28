@@ -37,6 +37,7 @@ typedef struct
 {
     str str;
     Elem elem;
+    bool constant;
 }
 Memb;
 
@@ -147,15 +148,16 @@ Memb_free(Memb* m)
 }
 
 Memb
-Memb_Init(str s, Elem e)
+Memb_Init(str s, Elem e, bool constant)
 {
-    return (Memb) { s, e };
+    return (Memb) { s, e, constant };
 }
 
 Memb
 Memb_copy(Memb* m)
 {
-    return Memb_Init(str_copy(&m->str), Elem_copy(&m->elem));
+    Elem e = Elem_copy(&m->elem);
+    return Memb_Init(str_copy(&m->str), e, m->constant);
 }
 
 int
@@ -357,10 +359,11 @@ Prefix(str* s, str* with)
 }
 
 void
-Insert(str* s, Elem e)
+Insert(str* s, Elem e, bool constant)
 {
     str n = Prefix(s, &namespace);
-    set_Memb_insert(&db, Memb_Init(n, e));
+    Memb m = Memb_Init(n, e, constant);
+    set_Memb_insert(&db, m);
 }
 
 void
@@ -370,7 +373,7 @@ Fun(deq_char* q)
     vec_str p = Params(q);
     vec_str_push_back(&p, f);
     vec_str_push_back(&p, DefBlock(q));
-    Insert(&f, Elem_Init(FUN, (Poly) { .fun = p }));
+    Insert(&f, Elem_Init(FUN, (Poly) { .fun = p }), true);
 }
 
 set_Memb_node*
@@ -494,7 +497,8 @@ Array(deq_char* q)
     if(Next(q) != ']')
         while(true)
         {
-            vec_Elem_push_back(&es, Expression(q));
+            Elem e = Expression(q);
+            vec_Elem_push_back(&es, e);
             if(Next(q) == ',')
                 Match(q, ',');
             else
@@ -512,7 +516,7 @@ Members(deq_char* q, set_Memb* m)
         str s = String(q);
         Match(q, ':');
         Elem e = Expression(q);
-        set_Memb_insert(m, Memb_Init(s, e));
+        set_Memb_insert(m, Memb_Init(s, e, true));
         if(Next(q) == ',')
             Match(q, ',');
         else
@@ -862,14 +866,14 @@ Elem_print(Elem e)
 }
 
 void
-Define(deq_char* q, str* n)
+Define(deq_char* q, str* n, bool mut)
 {
     Match(q, ':');
     Match(q, '=');
     if(Find(n))
         quit("`%s` already defined", n->value);
     Elem e = Expression(q);
-    Insert(n, e);
+    Insert(n, e, mut ? false : true);
 }
 
 void
@@ -878,6 +882,8 @@ Update(deq_char* q, str* n)
     Match(q, '=');
     Exists(n);
     Memb* m = Resolve(n);
+    if(m->constant)
+        quit("%s `%s` is constant", TypeStr[m->elem->type], m->str.value);
     Elem e = Expression(q);
     Elem_free(&m->elem);
     m->elem = e;
@@ -891,9 +897,15 @@ Block(deq_char* q)
     while(Next(q) != '}')
     {
         str s = Read(q, IsIdent);
+        bool mut = Equal(&s, "mut");
+        if(mut)
+        {
+            str_free(&s);
+            s = Read(q, IsIdent);
+        }
         char c = Next(q);
         if(c == ':')
-            Define(q, &s);
+            Define(q, &s, mut);
         else
         if(c == '=')
             Update(q, &s);
@@ -931,20 +943,17 @@ Call(Memb* m, vec_str* args)
     deq_char q = Queue(Code(m->elem));
     str new = str_copy(&m->str);
     Memb* membs[got];
+    int index = 0;
+    foreach(vec_str, args, it)
+        membs[index++] = &Exists(it.ref)->key;
+    str_swap(&namespace, &new);
+    for(int i = 0; i < got; i++)
     {
-        int index = 0;
-        foreach(vec_str, args, it)
-            membs[index++] = &Exists(it.ref)->key;
-    }{
-        str_swap(&namespace, &new);
-        for(int i = 0; i < got; i++)
-        {
-            Elem e = Elem_Init(REF, (Poly) { .ref = membs[i] });
-            Insert(&m->elem->poly.fun.value[i], e);
-        }
-        Block(&q);
-        str_swap(&namespace, &new);
+        Elem e = Elem_Init(REF, (Poly) { .ref = membs[i] });
+        Insert(&m->elem->poly.fun.value[i], e, true);
     }
+    Block(&q);
+    str_swap(&namespace, &new);
     deq_char_free(&q);
     str_free(&new);
     static Poly zero;
@@ -979,7 +988,6 @@ main(int argc, char* argv[])
     const char* code =
         "foo(A)"
         "{"
-            "A = A + [\"2\", \"3\", \"4\"];"
         "}"
 
         "inf()"
@@ -1000,8 +1008,7 @@ main(int argc, char* argv[])
         "# This is a comment\n"
         "main()"
         "{"
-            "a := argv;"
-            "g(bar, argv);"
+            "mut b := 1;"
         "}";
     deq_char q = Queue(code);
     db = set_Memb_init(Memb_Compare);
@@ -1014,7 +1021,7 @@ main(int argc, char* argv[])
     vec_str params = vec_str_init();
     str a = str_init("argv");
     Elem cmd = Command(argc, argv);
-    Insert(&a, cmd);
+    Insert(&a, cmd, true);
     set_Memb_node* node = Exists(&entry);
     Elem e = Call(&node->key, &params);
     str_free(&a);
