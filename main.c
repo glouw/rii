@@ -16,7 +16,7 @@ str namespace;
 #define quit(...) \
     printf("error: line %d: ", line), printf(__VA_ARGS__), exit(1)
 
-#define TYPES X(F64) X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL)
+#define TYPES X(F64) X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL) X(BLN)
 
 #define X(A) A,
 typedef enum { TYPES } Type;
@@ -48,12 +48,6 @@ Memb Memb_copy(Memb*);
 
 set_Memb db;
 
-Elem
-Call(Memb*, vec_str*);
-
-Elem
-Expression(deq_char*);
-
 typedef union
 {
     set_Memb obj;
@@ -62,6 +56,7 @@ typedef union
     str str;
     vec_str fun;
     double f64;
+    bool bln;
 }
 Poly;
 
@@ -234,7 +229,7 @@ IsString(char c)
     return IsLower(c)
         || IsUpper(c)
         || IsSpace(c)
-        || IsDigit(c);
+        || IsNum(c);
 }
 
 bool
@@ -367,7 +362,8 @@ Insert(str* s, Elem e, bool constant)
 str
 DefBlock(deq_char* q)
 {
-    Spin(q);
+    if(Next(q) != '{')
+        quit("expected block `{`\n");
     int open = 0;
     str b = str_init("");
     do
@@ -394,7 +390,10 @@ Params(deq_char* q, bool check)
             if(Find(&s))
                 quit("`%s` already defined", s.value);
         vec_str_push_back(&p, s);
-        if(Next(q) == ',')
+        char n = Next(q);
+        if(IsIdent(n))
+            quit("expected ','\n");
+        if(n == ',')
             Match(q, ',');
     }
     Match(q, ')');
@@ -402,13 +401,14 @@ Params(deq_char* q, bool check)
 }
 
 void
-Fun(deq_char* q, str* s)
+Fun(deq_char* q, str* l)
 {
+    str label = str_copy(l);
     vec_str p = Params(q, true);
-    vec_str_push_back(&p, *s);
-    str b = DefBlock(q);
-    vec_str_push_back(&p, b);
-    Insert(s, Elem_Init(FUN, (Poly) { .fun = p }), true);
+    vec_str_push_back(&p, label);
+    str code = DefBlock(q);
+    vec_str_push_back(&p, code);
+    Insert(&label, Elem_Init(FUN, (Poly) { .fun = p }), true);
 }
 
 Memb*
@@ -426,6 +426,9 @@ Resolve(str* s)
     Memb* m = &Exists(s)->key;
     return (m->elem->type == REF) ? Deref(m) : m;
 }
+
+Elem
+Call(Memb*, vec_str*);
 
 Elem
 Ident(deq_char* q)
@@ -495,6 +498,9 @@ Value(deq_char* q)
     return Elem_Init(t, p);
 }
 
+Elem
+Expression(deq_char*);
+
 vec_Elem
 Array(deq_char* q)
 {
@@ -519,10 +525,13 @@ Members(deq_char* q, set_Memb* m)
 {
     while(true)
     {
-        str s = String(q);
+        Elem s = Expression(q);
+        if(s->type != STR)
+            quit("Key value must be strings");
         Match(q, ':');
         Elem e = Expression(q);
-        set_Memb_insert(m, Memb_Init(s, e, true));
+        set_Memb_insert(m, Memb_Init(str_copy(&s->poly.str), e, true));
+        Elem_free(&s);
         if(Next(q) == ',')
             Match(q, ',');
         else
@@ -568,13 +577,34 @@ set_Memb_zip(set_Memb* a, set_Memb* b, void Op(Elem, Elem))
     }
 }
 
+char*
+Label(Elem e)
+{
+    vec_str* v = &e->poly.fun;
+    return v->value[v->size - 2].value;
+}
+
+char*
+Code(Elem e)
+{
+    vec_str* v = &e->poly.fun;
+    return v->value[v->size - 1].value;
+}
+
+size_t
+Arguments(Elem e)
+{
+    vec_str* v = &e->poly.fun;
+    return v->size - 2; // LABEL AND CODE ARE LAST TWO ELEMS.
+}
+
 void
 Check(Elem a, Elem b)
 {
     if(a->type != b->type)
         quit("type mismatch - types were '%s' and '%s'\n",
-                TypeStr[a->type],
-                TypeStr[b->type]);
+            TypeStr[a->type],
+            TypeStr[b->type]);
 }
 
 void
@@ -583,21 +613,13 @@ Mul(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR:
-        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Mul);
-        break; 
-    case OBJ:
-        set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul);
-        break; 
-    case F64:
-        a->poly.f64 *= b->poly.f64;
-        break;
-    case STR:
-    case FUN:
-    case NUL:
-    case REF:
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Mul); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul); break; 
+    case F64: a->poly.f64 *= b->poly.f64; break;
+    case STR: case FUN: case NUL: case BLN: case REF:
         quit("mul (*) not supported for types `%s` and `%s`\n",
-                TypeStr[a->type], TypeStr[b->type]); 
+            TypeStr[a->type],
+            TypeStr[b->type]); 
         break; 
     }
 }
@@ -608,21 +630,13 @@ Div(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR:
-        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Div);
-        break; 
-    case OBJ:
-        set_Memb_zip(&a->poly.obj, &b->poly.obj, Div);
-        break; 
-    case F64:
-        a->poly.f64 /= b->poly.f64;
-        break;
-    case STR:
-    case FUN:
-    case NUL:
-    case REF: 
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Div); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Div); break; 
+    case F64: a->poly.f64 /= b->poly.f64; break;
+    case STR: case FUN: case NUL: case BLN: case REF: 
         quit("div (/) not supported for types `%s` and `%s`\n",
-                TypeStr[a->type], TypeStr[b->type]); 
+            TypeStr[a->type],
+            TypeStr[b->type]); 
         break; 
     }
 }
@@ -633,24 +647,167 @@ Add(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR:
-        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add);
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case STR: str_append(&a->poly.str, str_c_str(&b->poly.str)); break; 
+    case F64: a->poly.f64 += b->poly.f64; break;
+    case FUN:
+    case NUL:
+    case BLN:
+    case REF:
+        quit("add (+) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
         break; 
-    case OBJ:
-        set_Memb_zip(&a->poly.obj, &b->poly.obj, Add);
+    }
+}
+
+bool StrET(char* a, char* b) { return strcmp(a, b) == 0; }
+bool StrLT(char* a, char* b) { return strcmp(a, b) < 0; }
+bool StrGT(char* a, char* b) { return strcmp(a, b) > 0; }
+bool StrLTE(char* a, char* b) { return StrLT(a, b) || StrET(a, b); }
+bool StrGTE(char* a, char* b) { return StrGT(a, b) || StrET(a, b); }
+
+void
+StrToBoolOp(Elem e, bool compare(char*, char*), char* a, char* b)
+{
+    bool bln = compare(a, b);
+    str_free(&e->poly.str);
+    e->poly.bln = bln;
+    e->type = BLN;
+}
+
+void
+FunToBool(Elem a, Elem b)
+{
+    bool bln = strcmp(Label(a), Label(b)) == 0;
+    vec_str_free(&a->poly.fun);
+    a->poly.bln = bln;
+    a->type = BLN;
+}
+
+void
+BoolEqual(Elem a, Elem b)
+{
+    Check(a, b);
+    switch(a->type)
+    {
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case F64: a->poly.bln = a->poly.f64 == b->poly.f64; a->type = BLN; break;
+    case BLN: a->poly.bln = a->poly.bln == b->poly.bln; a->type = BLN; break;
+    case STR: StrToBoolOp(a, StrET, a->poly.str.value, b->poly.str.value); break;
+    case FUN: FunToBool(a, b); break;
+    case NUL:
+    case REF:
+        quit("equals (==) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
         break; 
-    case STR:
-        str_append(&a->poly.str, str_c_str(&b->poly.str));
-        break; 
-    case F64:
-        a->poly.f64 += b->poly.f64;
-        break;
+    }
+}
+
+void
+BoolGT(Elem a, Elem b)
+{
+    Check(a, b);
+    switch(a->type)
+    {
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case F64: a->poly.bln = a->poly.f64 > b->poly.f64; a->type = BLN; break;
+    case BLN: a->poly.bln = a->poly.bln > b->poly.bln; a->type = BLN; break;
+    case STR: StrToBoolOp(a, StrGT, a->poly.str.value, b->poly.str.value); break;
     case FUN:
     case NUL:
     case REF:
-        quit("add (+) not supported for types `%s` and `%s`\n",
-                TypeStr[a->type], TypeStr[b->type]); 
+        quit("greater than (>) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
         break; 
+    }
+}
+
+void
+BoolLT(Elem a, Elem b)
+{
+    Check(a, b);
+    switch(a->type)
+    {
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case F64: a->poly.bln = a->poly.f64 < b->poly.f64; a->type = BLN; break;
+    case BLN: a->poly.bln = a->poly.bln < b->poly.bln; a->type = BLN; break;
+    case STR: StrToBoolOp(a, StrLT, a->poly.str.value, b->poly.str.value); break;
+    case FUN:
+    case NUL:
+    case REF:
+        quit("less than (<) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
+        break; 
+    }
+}
+
+void
+BoolLTE(Elem a, Elem b)
+{
+    Check(a, b);
+    switch(a->type)
+    {
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case F64: a->poly.bln = a->poly.f64 <= b->poly.f64; a->type = BLN; break;
+    case BLN: a->poly.bln = a->poly.bln <= b->poly.bln; a->type = BLN; break;
+    case STR: StrToBoolOp(a, StrLTE, a->poly.str.value, b->poly.str.value); break;
+    case FUN:
+    case NUL:
+    case REF:
+        quit("less than or equal to (<=) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
+        break; 
+    }
+}
+
+void
+BoolGTE(Elem a, Elem b)
+{
+    Check(a, b);
+    switch(a->type)
+    {
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Add); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Add); break; 
+    case F64: a->poly.bln = a->poly.f64 >= b->poly.f64; a->type = BLN; break;
+    case BLN: a->poly.bln = a->poly.bln >= b->poly.bln; a->type = BLN; break;
+    case STR: StrToBoolOp(a, StrGTE, a->poly.str.value, b->poly.str.value); break;
+    case FUN:
+    case NUL:
+    case REF:
+        quit("greater than or equal to (>=) not supported for types `%s` and `%s`\n",
+            TypeStr[a->type],
+            TypeStr[b->type]); 
+        break; 
+    }
+}
+
+void
+BoolNot(Elem a)
+{
+    a->poly.bln = !a->poly.bln;
+}
+
+void
+StrSub(str* a, str* b)
+{
+    if(a->size == 0)
+        return;
+    size_t n = str_find_last_of(a, b->value);
+    if(n == a->size - 1)
+    {
+        size_t len = b->size;
+        while(len--)
+            str_pop_back(a); 
     }
 }
 
@@ -660,20 +817,11 @@ Sub(Elem a, Elem b)
     Check(a, b);
     switch(a->type)
     {
-    case ARR:
-        vec_Elem_zip(&a->poly.arr, &b->poly.arr, Sub);
-        break; 
-    case OBJ:
-        set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub);
-        break; 
-    case F64:
-        a->poly.f64 -= b->poly.f64;
-        break;
-    case STR:
-        // HOW ABOUT STRCMP?
-    case FUN:
-    case NUL:
-    case REF:
+    case ARR: vec_Elem_zip(&a->poly.arr, &b->poly.arr, Sub); break; 
+    case OBJ: set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub); break; 
+    case F64: a->poly.f64 -= b->poly.f64; break;
+    case STR: StrSub(&a->poly.str, &b->poly.str); break;
+    case FUN: case NUL: case BLN: case REF:
         quit("sub (-) not supported for types `%s` and `%s`\n",
                 TypeStr[a->type], TypeStr[b->type]); 
         break; 
@@ -757,6 +905,61 @@ Expression(deq_char* q)
             Elem_free(&b);
         }
         else
+        if(n == '!')
+        {
+            Match(q, '!');
+            Match(q, '=');
+            Elem b = Expression(q);
+            BoolEqual(a, b);
+            BoolNot(a);
+            Elem_free(&b);
+        }
+        else
+        if(n == '=')
+        {
+            Match(q, '=');
+            Match(q, '=');
+            Elem b = Expression(q);
+            BoolEqual(a, b);
+            Elem_free(&b);
+        }
+        else
+        if(n == '>')
+        {
+            Match(q, '>');
+            if(Next(q) == '=')
+            {
+                Match(q, '=');
+                Elem b = Expression(q);
+                BoolGTE(a, b);
+                Elem_free(&b);
+            }
+            else
+            {
+                Elem b = Expression(q);
+                BoolGT(a, b);
+                Elem_free(&b);
+            }
+        }
+        else
+        if(n == '<')
+        {
+            Match(q, '<');
+            if(Next(q) == '=')
+            {
+                Match(q, '=');
+                Elem b = Expression(q);
+                BoolLTE(a, b);
+                Elem_free(&b);
+            }
+            else
+            {
+                Elem b = Expression(q);
+                BoolLT(a, b);
+                Elem_free(&b);
+            }
+        }
+        else
             break;
     }
     return a;
@@ -769,27 +972,6 @@ Tabs(int tabs)
     while(tabs--)
         for(int i = 0; i < width; i++)
             putchar(' ');
-}
-
-char*
-Code(Elem e)
-{
-    vec_str* v = &e->poly.fun;
-    return vec_str_back(v)->value;
-}
-
-size_t
-Arguments(Elem e)
-{
-    vec_str* v = &e->poly.fun;
-    return v->size - 2; // CODE AND LABEL.
-}
-
-str*
-Label(Elem e)
-{
-    vec_str* v = &e->poly.fun;
-    return &v->value[Arguments(e)];
 }
 
 void
@@ -859,7 +1041,10 @@ Elem_write(Elem e, int tabs)
         printf("|f64| %lf", e->poly.f64);
         break;
     case FUN:
-        printf("|fun| %s", Label(e)->value);
+        printf("|fun| %s", Label(e));
+        break;
+    case BLN:
+        printf("|bln| %s", e->poly.bln ? "true" : "false");
         break;
     }
 }
@@ -908,12 +1093,82 @@ Mutable(deq_char* q, str* s)
 }
 
 Elem
+Block(deq_char*);
+
+Elem
+Cond(deq_char* q)
+{
+    Match(q, '(');
+    Elem e = Expression(q);
+    if(e->type != BLN)
+        quit("expression must evaluate to boolean\n");
+    Match(q, ')');
+    return e;
+}
+
+void
+CondBlock(const char* code, bool* exec, Elem* ret)
+{
+    deq_char b = Queue(code);
+    Elem e = Block(&b);
+    deq_char_free(&b);
+    Elem_free(ret);
+    *ret = e;
+    *exec = true;
+}
+
+void
+If(deq_char* q, bool* exec, Elem* ret)
+{
+    Elem e = Cond(q);
+    str code = DefBlock(q);
+    if(e->poly.bln == true)
+        if(*exec == false)
+            CondBlock(code.value, exec, ret);
+    str_free(&code);
+    Elem_free(&e);
+}
+
+void
+Else(deq_char* q, bool* exec, Elem* ret)
+{
+    str code = DefBlock(q);
+    if(*exec == false)
+        CondBlock(code.value, exec, ret);
+    str_free(&code);
+}
+
+void
+IfChain(deq_char* q, Elem* ret)
+{
+    bool exec = false;
+    bool done = false;
+    If(q, &exec, ret);
+    while(!done)
+    {
+        str n = Read(q, IsIdent);
+        if(Equal(&n, "elif"))
+            If(q, &exec, ret);
+        else
+        if(Equal(&n, "else"))
+            Else(q, &exec, ret);
+        else
+        {
+            Requeue(q, &n);
+            done = true;
+        }
+        str_free(&n);
+    }
+}
+
+Elem
 Block(deq_char* q)
 {
     Match(q, '{');
     static Poly zero;
-    set_Memb old = set_Memb_copy(&db);
     Elem ret = Elem_Init(NUL, zero);
+    set_Memb old = set_Memb_copy(&db);
+    bool abort = false;
     while(Next(q) != '}')
     {
         str s = Read(q, IsIdent);
@@ -922,8 +1177,14 @@ Block(deq_char* q)
             Elem_free(&ret);
             ret = Expression(q);
             Match(q, ';');
-            str_free(&s);
-            break;
+            abort = true;
+        }
+        else
+        if(Equal(&s, "if"))
+        {
+            IfChain(q, &ret);
+            if(ret->type != NUL)
+                abort = true;
         }
         else
         {
@@ -941,14 +1202,15 @@ Block(deq_char* q)
                 Elem_free(&e);
             }
             Match(q, ';');
-            str_free(&s);
         }
+        str_free(&s);
     }
-    Match(q, '}');
+    if(abort == false)
+        Match(q, '}');
     set_Memb diff = set_Memb_difference(&db, &old);
     foreach(set_Memb, &diff, it)
     {
-        printf("FREE %s: ", it.ref->str.value);
+        printf(">> FREE %s: ", it.ref->str.value);
         Elem_print(it.ref->elem);
     }
     foreach(set_Memb, &diff, it)
@@ -1017,10 +1279,7 @@ Program(const char* code)
         str f = Read(&q, IsIdent);
         char n = Next(&q);
         if(n == '(')
-        {
-            str s = str_copy(&f);
-            Fun(&q, &s);
-        }
+            Fun(&q, &f);
         else
         {
             bool mut = Mutable(&q, &f);
@@ -1033,32 +1292,20 @@ Program(const char* code)
     deq_char_free(&q);
 }
 
-int
-Run(int argc, char* argv[], const char* code)
-{
-    Program(code);
-    Elem args = Command(argc, argv);
-    str entry = str_init("main");
-    vec_str params = vec_str_init();
-    str a = str_init("argv");
-    Insert(&a, args, true);
-    set_Memb_node* node = Exists(&entry);
-    Elem e = Call(&node->key, &params);
-    str_free(&a);
-    str_free(&entry);
-    str_free(&namespace);
-    vec_str_free(&params);
-    int ret = e->poly.f64; // TODO: CHANGE THIS TO I64 AND ENSURE I64.
-    Elem_free(&e); // CAN RETURN TO OS, BE NICE FOR TESTING.
-    return ret;
-}
-
 void
 Setup(void)
 {
     line = 1;
     namespace = str_init("");
     db = set_Memb_init(Memb_Compare);
+    static Poly zero;
+    Memb members[] = {
+        Memb_Init(str_init("true"),  Elem_Init(BLN, (Poly) { .bln = true  }), true),
+        Memb_Init(str_init("false"), Elem_Init(BLN, (Poly) { .bln = false }), true),
+        Memb_Init(str_init("null"),  Elem_Init(NUL, zero), true),
+    };
+    for(size_t i = 0; i < len(members); i++)
+        set_Memb_insert(&db, members[i]);
 }
 
 void
@@ -1069,22 +1316,77 @@ Teardown(void)
 }
 
 int
-main(int argc, char* argv[])
+Run(int argc, char* argv[], const char* code)
 {
     Setup();
-    int ret = Run(argc, argv,
-        "GLOBAL := \"test\";"
-        "add(a, b) { ret a + b; }"
-        "sub(a, b) { ret a - b; }"
-        "mul(a, b) { ret a * b; }"
-        "div(a, b) { ret a / b; }"
-        "main()"
-        "{"
-            "a := [1, 2, 3];"
-            "b := [1, 2, 3];"
-            "c := mul(a, b);"
-            "ret 1;"
-        "}");
+    Program(code);
+    Elem args = Command(argc, argv);
+    str entry = str_init("Main");
+    vec_str params = vec_str_init();
+    str a = str_init("argv");
+    Insert(&a, args, true);
+    set_Memb_node* node = Exists(&entry);
+    Elem e = Call(&node->key, &params);
+    Type t = F64;
+    if(e->type != t)
+        quit("entry `%s` expected return type `%s`\n", entry.value, TypeStr[t]);
+    int ret = e->poly.f64; // TODO: CHANGE THIS TO I64 AND ENSURE I64.
     Teardown();
+    Elem_free(&e); // CAN RETURN TO OS, BE NICE FOR TESTING.
+    str_free(&a);
+    str_free(&entry);
+    str_free(&namespace);
+    vec_str_free(&params);
     return ret;
+}
+
+int
+main(int argc, char* argv[])
+{
+    return Run(argc, argv,
+        "Join(a, b)"
+        "{"
+            "if(false)"
+            "{"
+                "ret a + b;"
+            "}"
+            "else"
+            "{"
+                "if(false)"
+                "{"
+                    "ret a + a + b;"
+                "}"
+                "else"
+                "{"
+                    "ret a + a + a + b;"
+                "}"
+            "}"
+        "}"
+
+        "F()"
+        "{"
+        "}"
+
+        "Test(g)"
+        "{"
+            "same := g == F;"
+        "}"
+
+        "Main()"
+        "{"
+            "a := \"www.\";"
+            "b := \"google.com\";"
+            "c := Join(a, b);"
+            "d := { \"string\" + \".\" + \"thing\" : 1 + 2 };"
+            "e := \"test\" + \"-other\" == \"test\" + \"-other\";"
+            "f := 3.0 == 3.1;"
+            "g := true != false;"
+            "h := 0 < 1;"
+            "i := 1 <= 1;"
+            "j := 1 > 0;"
+            "k := 1 >= 1;"
+            "Test(F);"
+            "ret 1;"
+        "}"
+    );
 }
