@@ -545,6 +545,7 @@ Ident(que_char* q, set_Memb* idents)
 Elem
 Element(que_char* q, set_Memb* idents)
 {
+    puts("ELEMENT");
     char n = Next(q);
     return (n == '"') ? Elem_Init(STR, (Poly) {.str = String(q)})
          : (n == '{') ? Elem_Init(OBJ, (Poly) {.obj = Object(q, idents)})
@@ -799,6 +800,7 @@ Term(que_char* q, set_Memb* idents)
 Elem
 Expression(que_char* q, set_Memb* idents)
 {
+    puts("Expression");
     Elem a = Factor(q, idents);
     Deref(&a, idents);
     while(true)

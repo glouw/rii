@@ -1,10 +1,11 @@
-CFLAGS = -Wall -Wextra -Wpedantic -g #-fsanitize=address -fsanitize=undefined 
+CFLAGS = -Wall -Wextra -Wpedantic -g
 
 BIN = rr
 
-SRC = rr.c
-
 CC = gcc -std=c99
 
-all: 
-	$(CC) $(SRC) -o $(BIN) $(CFLAGS) -I ctl/ctl
+all:
+	$(CC) main.c $(CFLAGS) -I ctl/ctl -o $(BIN) && ./$(BIN)
+
+clean:
+	rm -f $(BIN)
