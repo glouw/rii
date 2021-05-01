@@ -10,8 +10,6 @@
 #define T char
 #include <deq.h>
 
-static int Line;
-
 static str Buffer;
 
 static bool Buffering;
@@ -19,7 +17,7 @@ static bool Buffering;
 static int Stack;
 
 #define quit(...) \
-    printf("error: line %d: ", Line), printf(__VA_ARGS__), putchar('\n'), exit(1)
+    printf("error: "), printf(__VA_ARGS__), putchar('\n'), exit(1)
 
 #define TYPES \
     X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) \
@@ -275,26 +273,16 @@ static void
 Pop(deq_char* q)
 {
     char c = *deq_char_front(q);
-    if(c == '\n')
-        Line += 1;
     if(Buffering)
         str_push_back(&Buffer, c);
     deq_char_pop_front(q);
 }
 
 static void
-Unpop(deq_char* q, char c)
-{
-    if(c == '\n')
-        Line -= 1;
-    deq_char_push_front(q, c);
-}
-
-static void
 Requeue(deq_char* q, str* s)
 {
     for(int i = s->size - 1; i >= 0; i--)
-        Unpop(q, s->value[i]);
+        deq_char_push_front(q, s->value[i]);
 }
 
 static bool
@@ -789,7 +777,7 @@ Mul(Elem a, Elem b)
     case U32: case I64: case U64: case F32: case F64:
         PromoteMul(a, b);
         break;
-    case STR: case FUN: case NUL: case BLN: case REF:
+    case STR: case FUN: case NUL: case BLN: case REF: case BRK:
         quit("mul (*) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -809,7 +797,7 @@ Div(Elem a, Elem b)
     case U32: case I64: case U64: case F32: case F64:
         PromoteDiv(a, b);
         break;
-    case STR: case FUN: case NUL: case BLN: case REF: 
+    case STR: case FUN: case NUL: case BLN: case REF: case BRK:
         quit("div (/) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -830,7 +818,7 @@ Add(Elem a, Elem b)
     case U32: case I64: case U64: case F32: case F64:
         PromoteAdd(a, b);
         break;
-    case FUN: case NUL: case BLN: case REF:
+    case FUN: case NUL: case BLN: case REF: case BRK:
         quit("add (+) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -851,7 +839,7 @@ Sub(Elem a, Elem b)
     case U32: case I64: case U64: case F32: case F64:
         PromoteSub(a, b);
         break;
-    case FUN: case NUL: case BLN: case REF:
+    case FUN: case NUL: case BLN: case REF: case BRK:
         quit("sub (-) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -898,7 +886,7 @@ BoolEqual(Elem a, Elem b)
         PromoteEquals(a, b);
         break;
     case FUN: FunToBool(a, b); break;
-    case NUL: case REF:
+    case NUL: case REF: case BRK:
         quit("equals (==) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -920,7 +908,7 @@ BoolGT(Elem a, Elem b)
     case BLN:
         PromoteGT(a, b);
         break;
-    case FUN: case NUL: case REF:
+    case FUN: case NUL: case REF: case BRK:
         quit("greater than (>) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -942,7 +930,7 @@ BoolLT(Elem a, Elem b)
     case BLN:
         PromoteLT(a, b);
         break;
-    case FUN: case NUL: case REF:
+    case FUN: case NUL: case REF: case BRK:
         quit("less than (<) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -964,7 +952,7 @@ BoolLTE(Elem a, Elem b)
     case BLN:
         PromoteLTE(a, b);
         break;
-    case FUN: case NUL: case REF:
+    case FUN: case NUL: case REF: case BRK:
         quit("less than or equal to (<=) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -986,7 +974,7 @@ BoolGTE(Elem a, Elem b)
     case BLN:
         PromoteGTE(a, b);
         break;
-    case FUN: case NUL: case REF:
+    case FUN: case NUL: case REF: case BRK:
         quit("greater than or equal to (>=) not supported for types `%s` and `%s`",
             Types[a->type],
             Types[b->type]); 
@@ -1217,6 +1205,7 @@ Write(Elem e, int tabs)
     case F64: printf("|f64| %lf", e->poly.f64); break;
     case FUN: printf("|fun| %s", Label(e)); break;
     case BLN: printf("|bln| %s", e->poly.bln ? "true" : "false"); break;
+    case BRK: quit("how did you manage to print a break statement?"); break;
     }
 }
 
@@ -1547,7 +1536,7 @@ Command(int argc, char* argv[])
 {
     str s = str_init("");
     str_append(&s, "[");
-    for(int i = 1; i < argc; i++)
+    for(int i = 2; i < argc; i++)
     {
         str_append(&s, "\"");
         str_append(&s, argv[i]);
@@ -1588,7 +1577,6 @@ Program(const char* code)
 static void
 Setup(void)
 {
-    Line = 1;
     Buffer = str_init("");
     Buffering = false;
     db = set_Memb_init(Memb_compare);
@@ -1604,7 +1592,6 @@ Setup(void)
 static void
 Teardown(void)
 {
-    Line = 0;
     str_free(&Buffer);
     Buffering = false;
     set_Memb_free(&db);
@@ -1614,8 +1601,8 @@ static int
 Run(int argc, char* argv[], const char* code)
 {
     Setup();
-    Program(code);
     Elem args = Command(argc, argv);
+    Program(code);
     str entry = str_init("Main");
     vec_str params = vec_str_init();
     str a = str_init("argv");
@@ -1634,26 +1621,26 @@ Run(int argc, char* argv[], const char* code)
     return ret;
 }
 
+char*
+Open(const char* path)
+{
+    FILE* file = fopen(path, "rb");
+    fseek(file, 0, SEEK_END);
+    long bytes = ftell(file);
+    rewind(file);
+    char* buffer = (char*) malloc(bytes * sizeof(char));
+    fread(buffer, bytes, 1, file);
+    fclose(file);
+    return buffer;
+}
+
 int
 main(int argc, char* argv[])
 {
-    return Run(argc, argv,
-        "ZERO := 0;"
-        "Fact(n)"
-        "{"
-            "if(n == ZERO)"
-            "{"
-                "ret 1;"
-            "}"
-            "next := n - 1;"
-            "ret n * Fact(next);"
-        "}"
-
-        "Main()"
-        "{"
-            "n := 10;"
-            "ans := Fact(n);"
-            "ret 0;"
-        "}"
-    );
+    if(argc < 2)
+        quit("./rr file.rr arg0 arg1 arg2");
+    char* buffer = Open(argv[1]);
+    int ret = Run(argc, argv, buffer);
+    free(buffer);
+    return ret;
 }
