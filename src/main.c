@@ -12,18 +12,18 @@
 
 static int Line;
 
-static str Namespace;
-
 static str Buffer;
 
 static bool Buffering;
+
+static int Stack;
 
 #define quit(...) \
     printf("error: line %d: ", Line), printf(__VA_ARGS__), putchar('\n'), exit(1)
 
 #define TYPES \
     X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) \
-    X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL) X(BLN)
+    X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL) X(BLN) X(BRK)
 
 #define X(A) A,
 typedef enum { TYPES } Type;
@@ -229,6 +229,13 @@ Elem_copy(Elem* e)
     return copy;
 }
 
+static Elem
+Elem_null(void)
+{
+    static Poly zero;
+    return Elem_init(NUL, zero);
+}
+
 static void
 Memb_free(Memb* m)
 {
@@ -345,6 +352,12 @@ IsIdent(char c)
         || c == '_';
 }
 
+static bool
+IsBasic(Elem a)
+{
+    return a->type >= I8 && a->type <= F64;
+}
+
 static void
 Comment(deq_char* q)
 {
@@ -409,32 +422,58 @@ Read(deq_char* q, bool clause(char))
 }
 
 static str
-Prefix(str* s, str* with)
+Global(str* s)
 {
-    str n = str_copy(with);
-    if(n.size > 0)
-        str_append(&n, ".");
-    str_append(&n, s->value);
-    return n;
+    str o = str_init("");
+    str_append(&o, "0");
+    str_append(&o, ".");
+    str_append(&o, s->value);
+    return o;
+}
+
+static str
+Local(str* s)
+{
+    char buffer[32] = { 0 }; // BIG ENOUGH FOR UINT64_T IF NEEDED.
+    sprintf(buffer, "%d", Stack);
+    str o = str_init("");
+    str_append(&o, buffer);
+    str_append(&o, ".");
+    str_append(&o, s->value);
+    return o;
 }
 
 static set_Memb_node*
 Find(str* s)
 {
     // FIRST, FIND LOCAL.
-    str n = Prefix(s, &Namespace);
-    set_Memb_node* local = set_Memb_find(&db, (Memb) { .str = n });
-    str_free(&n);
+    set_Memb_node* local;
+    {
+        str l = Local(s);
+        local = set_Memb_find(&db, (Memb) { .str = l });
+        str_free(&l);
+    }
     if(local)
         return local;
-    // FAILING, FIND GLOBAL.
-    return set_Memb_find(&db, (Memb) { .str = *s });
+
+    // FAILING THAT, FIND GLOBAL.
+    set_Memb_node* globa;
+    {
+        str g = Global(s);
+        globa = set_Memb_find(&db, (Memb) { .str = g });
+        str_free(&g);
+    }
+    if(globa)
+        return globa;
+
+    // FAILING EITHER, TESTS AGAINST NULL ARE HANDY.
+    return NULL;
 }
 
 static void
 Erase(str* s)
 {
-    set_Memb_node* node = Find(s);
+    set_Memb_node* node = set_Memb_find(&db, (Memb) { .str = *s });
     set_Memb_erase_node(&db, node);
 }
 
@@ -443,14 +482,14 @@ Exists(str* s)
 {
     set_Memb_node* node = Find(s);
     if(node == NULL)
-        quit("identifier '%s' not defined", s->value);
+        quit("identifier `%s` not defined", s->value);
     return node;
 }
 
 static void
 Insert(str* s, Elem e, bool c)
 {
-    str n = Prefix(s, &Namespace);
+    str n = Local(s);
     Memb m = Memb_init(c, n, e);
     set_Memb_insert(&db, m);
 }
@@ -463,8 +502,8 @@ ReadBlock(deq_char* q)
     int open = 0;
     str b = str_init("");
     do
-    {   // MUST READ SPACE.
-        char n = *deq_char_front(q);
+    {  
+        char n = *deq_char_front(q); // MUST READ SPACES, DO NOT USE PEEK.
         if(n == '{') open++;
         if(n == '}') open--;
         str_push_back(&b, n);
@@ -475,14 +514,14 @@ ReadBlock(deq_char* q)
 }
 
 static vec_str
-Params(deq_char* q, bool check)
+Params(deq_char* q, bool declaring)
 {
     vec_str p = vec_str_init();
     Match(q, '(');
     while(Next(q) != ')')
     {
         str s = Read(q, IsIdent);
-        if(check)
+        if(declaring)
             if(Find(&s))
                 quit("`%s` already defined", s.value);
         vec_str_push_back(&p, s);
@@ -556,13 +595,10 @@ String(deq_char* q)
 static Poly
 LoadValue(deq_char* q, Type* t)
 {
-    Poly p = { 0 };
     str s = Read(q, IsNum);
-    if(str_count(&s, '.'))
-    {
-        puts("FLOAT!");
-        *t = F64;
-    }
+    if(*t == NUL)
+        *t = str_count(&s, '.') ? F64 : I64;
+    Poly p;
     switch(*t)
     {
     case  I8: p.i8  = strtol  (s.value, NULL, 10); break;
@@ -574,8 +610,10 @@ LoadValue(deq_char* q, Type* t)
     case I64: p.i64 = strtoll (s.value, NULL, 10); break;
     case U64: p.u64 = strtoull(s.value, NULL, 10); break;
     case F32: p.f32 = strtof  (s.value, NULL); break;
-    default:
     case F64: p.f64 = strtod  (s.value, NULL); break;
+    default:
+        quit("type `%s` cannot be loaded directly", Types[*t]);
+        break;
     }
     str_free(&s);
     return p;
@@ -596,7 +634,7 @@ LoadType(deq_char* q, char l, char r)
     if(Equal(&t, "i64")) type = I64; else
     if(Equal(&t, "u64")) type = U64; else
     if(Equal(&t, "f32")) type = F32; else
-    if(Equal(&t, "f64")) type = F64; else quit("direct type load '%s' not supported", t.value);
+    if(Equal(&t, "f64")) type = F64; else quit("direct type load `%s` not supported", t.value);
     Match(q, r);
     str_free(&t);
     return type;
@@ -605,7 +643,7 @@ LoadType(deq_char* q, char l, char r)
 static Elem
 Value(deq_char* q)
 {
-    Type t = (Next(q) == '|') ? LoadType(q, '|', '|') : I64;
+    Type t = (Next(q) == '|') ? LoadType(q, '|', '|') : NUL;
     Poly p = LoadValue(q, &t);
     return Elem_init(t, p);
 }
@@ -724,19 +762,17 @@ StrSub(str* a, str* b)
     }
 }
 
-static bool
-Basic(Elem a)
-{
-    return a->type >= I8 && a->type <= F64;
-}
-
 static void
 Check(Elem a, Elem b)
 {
-    if(Basic(a) && Basic(b))
+    if(IsBasic(a) && IsBasic(b))
+    {
+        // BASIC TYPES ARE COMPATIBLE WITH ONE ANOTHER.
         return;
+    }
+
     if(a->type != b->type)
-        quit("type mismatch - types were '%s' and '%s'",
+        quit("type mismatch - types were `%s` and `%s`",
             Types[a->type],
             Types[b->type]);
 }
@@ -968,11 +1004,14 @@ static Elem
 Element(deq_char* q)
 {
     char n = Next(q);
-    return (n == '"') ? Elem_init(STR, (Poly) { .str = String(q) })
-         : (n == '{') ? Elem_init(OBJ, (Poly) { .obj = Object(q) })
-         : (n == '[') ? Elem_init(ARR, (Poly) { .arr = Array (q) })
-         : (n == '|') || IsNum(n) ? Value(q)
-         : Ident(q);
+    if(n == '"') return Elem_init(STR, (Poly) { .str = String(q) });
+    if(n == '{') return Elem_init(OBJ, (Poly) { .obj = Object(q) });
+    if(n == '[') return Elem_init(ARR, (Poly) { .arr = Array (q) });
+    if(n == '|' || IsNum(n))
+        return Value(q);
+    if(IsIdent(n))
+        return Ident(q);
+    quit("attempted to load element ");
 }
 
 static Elem
@@ -1199,17 +1238,69 @@ Define(deq_char* q, str* n, bool mut)
     Insert(n, e, mut ? false : true);
 }
 
-static void
-Update(deq_char* q, str* n)
+static Memb*
+Mut(str* n)
 {
-    Match(q, '=');
     Exists(n);
     Memb* m = Resolve(n);
     if(m->constant)
         quit("%s `%s` is constant\n", Types[m->elem->type], m->str.value);
+    return m;
+}
+
+static void
+Update(deq_char* q, str* n)
+{
+    Match(q, '=');
+    Memb* m = Mut(n);
     Elem e = Expression(q);
     Elem_free(&m->elem);
     m->elem = e;
+}
+
+static void
+AddEqual(deq_char* q, str* n)
+{
+    Match(q, '+');
+    Match(q, '=');
+    Memb* m = Mut(n);
+    Elem e = Expression(q);
+    Add(m->elem, e);
+    Elem_free(&e);
+}
+
+static void
+SubEqual(deq_char* q, str* n)
+{
+    Match(q, '-');
+    Match(q, '=');
+    Memb* m = Mut(n);
+    Elem e = Expression(q);
+    Sub(m->elem, e);
+    Elem_free(&e);
+}
+
+static void
+MulEqual(deq_char* q, str* n)
+{
+    Match(q, '*');
+    Match(q, '=');
+    Memb* m = Mut(n);
+    Elem e = Expression(q);
+    Mul(m->elem, e);
+    Elem_free(&e);
+}
+
+static void
+DivEqual(deq_char* q, str* n)
+{
+    Match(q, '/');
+    Match(q, '=');
+    Memb* m = Mut(n);
+    Elem e = Expression(q);
+    printf("GOT %f\n", e->poly.f64);
+    Div(m->elem, e);
+    Elem_free(&e);
 }
 
 static bool
@@ -1262,7 +1353,14 @@ While(deq_char* q, Elem* ret)
         if(e->poly.bln == true)
         {
             Brace(code.value, ret);
-            Requeue(q, &Buffer);
+            if((*ret)->type == BRK)
+            {
+                // PREVENT BREAKING FUNCTION.
+                (*ret)->type = NUL;
+                done = true;
+            }
+            else
+                Requeue(q, &Buffer);
         }
         else
             done = true;
@@ -1325,8 +1423,7 @@ static Elem
 Block(deq_char* q)
 {
     Match(q, '{');
-    static Poly zero;
-    Elem ret = Elem_init(NUL, zero);
+    Elem ret = Elem_null();
     set_Memb old = set_Memb_copy(&db);
     bool abort = false;
     while(Next(q) != '}')
@@ -1337,6 +1434,13 @@ Block(deq_char* q)
             Elem_free(&ret);
             ret = Expression(q);
             Match(q, ';');
+            abort = true;
+        }
+        else
+        if(Equal(&s, "break"))
+        {
+            Match(q, ';');
+            ret->type = BRK;
             abort = true;
         }
         else
@@ -1357,20 +1461,26 @@ Block(deq_char* q)
         {
             bool mut = Mutable(q, &s);
             char c = Next(q);
-            if(c == ':')
-                Define(q, &s, mut);
-            else
-            if(c == '=')
-                Update(q, &s);
-            else
+            switch(c)
             {
-                Requeue(q, &s);
-                Elem e = Expression(q);
-                Elem_free(&e);
+            case ':': Define(q, &s, mut); break;
+            case '=': Update(q, &s); break;
+            case '+': AddEqual(q, &s); break;
+            case '-': SubEqual(q, &s); break;
+            case '*': MulEqual(q, &s); break;
+            case '/': DivEqual(q, &s); break;
+            default:
+                {
+                    Requeue(q, &s);
+                    Elem e = Expression(q);
+                    Elem_free(&e);
+                }
             }
             Match(q, ';');
         }
         str_free(&s);
+        if(abort)
+            break;
     }
     if(abort == false)
         Match(q, '}');
@@ -1390,32 +1500,45 @@ Block(deq_char* q)
 static Elem
 Call(Memb* m, vec_str* args)
 {
-    if(m->elem->type != FUN)
-        quit("expected function\n");
-    int exp = Arguments(m->elem);
-    int got = args->size;
-    if(got != exp)
-        quit("`%s()` got %d args but expected %d\n", m->str.value, got, exp);
-    char* code = Code(m->elem);
-    deq_char q = Queue(code);
-    str new = str_copy(&m->str);
-    if(got > 0)
+    // ENSURE ARGUMENT PARAMETER COUNT MATCHES.
+    int got;
     {
-        Memb* membs[got];
+        if(m->elem->type != FUN)
+            quit("expected function\n");
+        int exp = Arguments(m->elem);
+        got = args->size;
+        if(got != exp)
+            quit("`%s()` got %d args but expected %d\n", m->str.value, got, exp);
+    }
+
+    // ENSURE VARIABLES EXIST.
+
+    Memb* membs[got + 1]; // (+1) BECAUSE VLAS ARE BROKEN.
+    {
         int index = 0;
         foreach(vec_str, args, it)
             membs[index++] = &Exists(it.ref)->key;
-        str_swap(&Namespace, &new);
+    }
+
+    // PUSH REFERENCES.
+
+    Elem ret;
+    {
+        deq_char q = Queue(Code(m->elem));
+        Stack += 1;
         for(int i = 0; i < got; i++)
         {
             Elem e = Elem_init(REF, (Poly) { .ref = membs[i] });
             Insert(&m->elem->poly.fun.value[i], e, true);
         }
+        ret = Block(&q);
+        Stack -= 1;
+        deq_char_free(&q);
     }
-    Elem ret = Block(&q);
-    str_swap(&Namespace, &new);
-    deq_char_free(&q);
-    str_free(&new);
+
+    if(ret->type == BRK)
+        quit("cannot break a function");
+
     return ret;
 }
 
@@ -1466,15 +1589,13 @@ static void
 Setup(void)
 {
     Line = 1;
-    Namespace = str_init("");
     Buffer = str_init("");
     Buffering = false;
     db = set_Memb_init(Memb_compare);
-    static Poly zero;
     Memb members[] = {
         Memb_init(true, str_init("true"),  Elem_init(BLN, (Poly) { .bln = true  })),
         Memb_init(true, str_init("false"), Elem_init(BLN, (Poly) { .bln = false })),
-        Memb_init(true, str_init("null"),  Elem_init(NUL, zero)),
+        Memb_init(true, str_init("null"),  Elem_null()),
     };
     for(size_t i = 0; i < len(members); i++)
         set_Memb_insert(&db, members[i]);
@@ -1483,7 +1604,9 @@ Setup(void)
 static void
 Teardown(void)
 {
-    str_free(&Namespace);
+    Line = 0;
+    str_free(&Buffer);
+    Buffering = false;
     set_Memb_free(&db);
 }
 
@@ -1501,13 +1624,12 @@ Run(int argc, char* argv[], const char* code)
     Elem e = Call(&node->key, &params);
     Type t = I64;
     if(e->type != t)
-        quit("entry `%s` expected return type `%s`\n", entry.value, Types[t]);
+        quit("entry `%s` expected return type `%s`, got `%s`\n", entry.value, Types[t], Types[e->type]);
     int ret = e->poly.i64;
     Teardown();
     Elem_free(&e);
     str_free(&a);
     str_free(&entry);
-    str_free(&Namespace);
     vec_str_free(&params);
     return ret;
 }
@@ -1516,41 +1638,21 @@ int
 main(int argc, char* argv[])
 {
     return Run(argc, argv,
-        "Join(a, b)"
+        "ZERO := 0;"
+        "Fact(n)"
         "{"
-            "if(false)"
+            "if(n == ZERO)"
             "{"
-                "ret a + b;"
+                "ret 1;"
             "}"
-            "else"
-            "{"
-                "if(false)"
-                "{"
-                    "ret a + a + b;"
-                "}"
-                "else"
-                "{"
-                    "ret a + a + a + b;"
-                "}"
-            "}"
-        "}"
-
-        "F()"
-        "{"
-        "}"
-
-        "Test(g)"
-        "{"
-            "same := (((g == F)));"
+            "next := n - 1;"
+            "ret n * Fact(next);"
         "}"
 
         "Main()"
         "{"
-            "mut i := 128;"
-            "while(i > 0)"
-            "{"
-                "i = i - 1;"
-            "}"
+            "n := 10;"
+            "ans := Fact(n);"
             "ret 0;"
         "}"
     );
