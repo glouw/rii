@@ -23,19 +23,19 @@ static int Stack;
 #define XSTR(s) STR(s)
 #define STR(s) #s
 
-#define X(A) A,
 typedef enum
 {
+#define X(A) A,
     TYPES
+#undef X
 }
 Type;
-#undef X
 
-#define X(A) #A,
 static const char* Types[] = {
+#define X(A) #A,
     TYPES
-};
 #undef X
+};
 
 typedef struct Val* Elem;
 
@@ -1238,11 +1238,35 @@ StrSub(str* a, str* b)
     }
 }
 
-static bool StrET(char* a, char* b) { return strcmp(a, b) == 0; }
-static bool StrLT(char* a, char* b) { return strcmp(a, b) < 0; }
-static bool StrGT(char* a, char* b) { return strcmp(a, b) > 0; }
-static bool StrLTE(char* a, char* b) { return StrLT(a, b) || StrET(a, b); }
-static bool StrGTE(char* a, char* b) { return StrGT(a, b) || StrET(a, b); }
+static bool
+StrET(char* a, char* b)
+{
+    return strcmp(a, b) == 0;
+}
+
+static bool
+StrLT(char* a, char* b)
+{
+    return strcmp(a, b) < 0;
+}
+
+static bool
+StrGT(char* a, char* b)
+{
+    return strcmp(a, b) > 0;
+}
+
+static bool StrLTE(char* a, char* b)
+{
+    return StrLT(a, b)
+        || StrET(a, b);
+}
+
+static bool StrGTE(char* a, char* b)
+{
+    return StrGT(a, b)
+        || StrET(a, b);
+}
 
 static void
 StrToBoolOp(Elem e, bool compare(char*, char*), char* a, char* b)
@@ -1683,24 +1707,78 @@ Write(Elem e, int tabs)
 {
     switch(e->type)
     {
-    case OBJ: Obj_write(e, tabs + 1); break;
-    case ARR: Arr_write(e, tabs + 1); break;
-    case STR: printf("|str| \"%s\"", e->poly.str.value); break;
-    case REF: printf("|ref| %p ", (void*) e->poly.ref->elem); Write(e->poly.ref->elem, 0); break;
-    case NUL: printf("|null| null"); break;
-    case I8:  printf("|i8| %d", e->poly.i8); break;
-    case U8:  printf("|u8| %u", e->poly.u8); break;
-    case I16: printf("|i16| %d", e->poly.i16); break;
-    case U16: printf("|u16| %u", e->poly.u16); break;
-    case I32: printf("|i32| %d", e->poly.i32); break;
-    case U32: printf("|u32| %u", e->poly.u32); break;
-    case I64: printf("|i64| %ld", e->poly.i64); break;
-    case U64: printf("|u64| %lu", e->poly.u64); break;
-    case F32: printf("|f32| %f", e->poly.f32); break;
-    case F64: printf("|f64| %lf", e->poly.f64); break;
-    case FUN: printf("|fun| %s", Label(e)); break;
-    case BLN: printf("|bln| %s", e->poly.bln ? "true" : "false"); break;
-    case BRK: quit("how did you manage to print a break statement?"); break;
+    case OBJ:
+        Obj_write(e, tabs + 1);
+        break;
+
+    case ARR:
+        Arr_write(e, tabs + 1);
+        break;
+
+    case STR:
+        printf("|str| \"%s\"", e->poly.str.value);
+        break;
+
+    case REF:
+        printf("|ref| %p ", (void*) e->poly.ref->elem);
+        Write(e->poly.ref->elem, 0);
+        break;
+
+    case NUL:
+        printf("|null| null");
+        break;
+
+    case I8:
+        printf("|i8| %d", e->poly.i8);
+        break;
+
+    case U8:
+        printf("|u8| %u", e->poly.u8);
+        break;
+
+    case I16:
+        printf("|i16| %d", e->poly.i16);
+        break;
+
+    case U16:
+        printf("|u16| %u", e->poly.u16);
+        break;
+
+    case I32:
+        printf("|i32| %d", e->poly.i32);
+        break;
+
+    case U32:
+        printf("|u32| %u", e->poly.u32);
+        break;
+
+    case I64:
+        printf("|i64| %ld", e->poly.i64);
+        break;
+
+    case U64:
+        printf("|u64| %lu", e->poly.u64);
+        break;
+
+    case F32:
+        printf("|f32| %f", e->poly.f32);
+        break;
+
+    case F64:
+        printf("|f64| %lf", e->poly.f64);
+        break;
+
+    case FUN:
+        printf("|fun| %s", Label(e));
+        break;
+
+    case BLN:
+        printf("|bln| %s", e->poly.bln ? "true" : "false");
+        break;
+
+    case BRK:
+        quit("how did you manage to print a break statement?");
+        break;
     }
 }
 
