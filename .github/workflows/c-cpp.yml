@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
+    - uses: actions/checkout@v2
 
     - name: MAKE
       run:
-        make SANITIZE=1
+        make test SANITIZE=1
