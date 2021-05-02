@@ -1,4 +1,8 @@
 Main()
 {
+    while(true)
+    {
+        break;
+    }
     continue;
 }

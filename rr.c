@@ -16,7 +16,7 @@ static bool BUFFERING;
 
 static int STACK;
 
-static int LINE;
+static int LINE; // TODO: LINE NUMBERS GET REKT WITH CONTINUE / BREAK / IF ELIF ELSE -- INVESTIGATE.
 
 #define U64CHARS (32)
 
@@ -790,6 +790,8 @@ Pop(deq_char* q)
     char c = *deq_char_front(q);
     if(BUFFERING)
         str_push_back(&BUFFER, c);
+    if(c == '\n')
+        LINE += 1;
     deq_char_pop_front(q);
 }
 
@@ -797,7 +799,10 @@ static void
 Requeue(deq_char* q, str* s)
 {
     for(int i = s->size - 1; i >= 0; i--)
-        deq_char_push_front(q, s->value[i]);
+    {
+        char c = s->value[i];
+        deq_char_push_front(q, c);
+    }
 }
 
 static bool
@@ -993,19 +998,18 @@ Insert(str* s, Elem e, bool c, bool a)
 static str
 ReadBlock(deq_char* q)
 {
-    if(Next(q) != '{')
-        quit("expected block `{`");
     int open = 0;
     str b = str_init("");
+    bool idle = true; // SUCH THAT THE NEWLINE CAN BE CONSUMED.
     do
     {  
         char n = *deq_char_front(q); // MUST READ SPACES, DO NOT USE PEEK.
-        if(n == '{') open++;
-        if(n == '}') open--;
+        if(n == '{') { open++; idle = false; }
+        if(n == '}') { open--; }
         str_push_back(&b, n);
         Pop(q);
     }
-    while(open > 0);
+    while(open > 0 || idle);
     return b;
 }
 
@@ -2212,13 +2216,16 @@ Call(Memb* m, vec_str* args)
 {
     int count = CountArgs(m, args);
     deq_char q = PushArgs(m, args, count);
+    int old = LINE;
+    LineSet(Line(m->elem));
     Elem ret = Block(&q);
     STACK -= 1;
-    deq_char_free(&q);
     if(ret->type == BRK)
         quit("`break` expected `while` loop or `for` loop");
     if(ret->type == CNT)
         quit("`continue` expected `while` loop or `for` loop");
+    LINE = old; 
+    deq_char_free(&q);
     return ret;
 }
 
