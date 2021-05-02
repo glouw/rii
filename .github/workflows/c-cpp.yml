@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
       with:
-        submodules: 'true'
-        ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+        submodules: recursive
 
     - name: CTL
       run:
