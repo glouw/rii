@@ -18,7 +18,7 @@ static int Stack;
 
 #define quit(...) printf("error: "), printf(__VA_ARGS__), putchar('\n'), exit(1)
 
-#define TYPES X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL) X(BLN) X(BRK)
+#define TYPES X(I8) X(U8) X(I16) X(U16) X(I32) X(U32) X(I64) X(U64) X(F32) X(F64) X(STR) X(FUN) X(REF) X(OBJ) X(ARR) X(NUL) X(BLN) X(BRK) X(CNT)
 
 #define XSTR(s) STR(s)
 #define STR(s) #s
@@ -1304,13 +1304,16 @@ Mul(Elem a, Elem b)
     case ARR:
         deq_Elem_zip(&a->poly.arr, &b->poly.arr, Mul);
         break; 
+
     case OBJ:
         set_Memb_zip(&a->poly.obj, &b->poly.obj, Mul);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64:
         PromoteMul(a, b);
         break;
-    case STR: case FUN: case NUL: case BLN: case REF: case BRK:
+
+    case STR: case FUN: case NUL: case BLN: case REF: case BRK: case CNT:
         quit("mul (*) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
         break; 
     }
@@ -1326,13 +1329,16 @@ Div(Elem a, Elem b)
     case ARR:
         deq_Elem_zip(&a->poly.arr, &b->poly.arr, Div);
         break; 
+
     case OBJ:
         set_Memb_zip(&a->poly.obj, &b->poly.obj, Div);
         break; 
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64:
         PromoteDiv(a, b);
         break;
-    case STR: case FUN: case NUL: case BLN: case REF: case BRK:
+
+    case STR: case FUN: case NUL: case BLN: case REF: case BRK: case CNT:
         quit("div (/) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
         break; 
     }
@@ -1348,16 +1354,20 @@ Add(Elem a, Elem b)
     case ARR:
         deq_Elem_zip(&a->poly.arr, &b->poly.arr, Add);
         break; 
+
     case OBJ:
         set_Memb_zip(&a->poly.obj, &b->poly.obj, Add);
         break; 
+
     case STR:
         str_append(&a->poly.str, str_c_str(&b->poly.str));
         break; 
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64:
         PromoteAdd(a, b);
         break;
-    case FUN: case NUL: case BLN: case REF: case BRK:
+
+    case FUN: case NUL: case BLN: case REF: case BRK: case CNT:
         quit("add (+) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
         break; 
     }
@@ -1373,16 +1383,20 @@ Sub(Elem a, Elem b)
     case ARR:
         deq_Elem_zip(&a->poly.arr, &b->poly.arr, Sub);
         break; 
+
     case OBJ:
         set_Memb_zip(&a->poly.obj, &b->poly.obj, Sub);
         break; 
+
     case STR:
         StrSub(&a->poly.str, &b->poly.str);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64:
         PromoteSub(a, b);
         break;
-    case FUN: case NUL: case BLN: case REF: case BRK:
+
+    case FUN: case NUL: case BLN: case REF: case BRK: case CNT:
         quit("sub (-) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
         break; 
     }
@@ -1402,22 +1416,27 @@ BoolET(Elem a, Elem b)
         a->type = BLN;
         a->poly.bln = bln;
         break;
+
     case OBJ:
         bln = set_Memb_zip(&a->poly.obj, &b->poly.obj, BoolET);
         set_Memb_free(&a->poly.obj);
         a->type = BLN;
         a->poly.bln = bln;
         break;
+
     case STR:
         StrToBoolOp(a, StrET, a->poly.str.value, b->poly.str.value);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64: case BLN:
         PromoteEquals(a, b);
         break;
+
     case FUN:
         FunToBool(a, b);
         break;
-    case NUL: case REF: case BRK:
+
+    case NUL: case REF: case BRK: case CNT:
         quit("equals (==) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1432,10 +1451,12 @@ BoolLT(Elem a, Elem b)
     case STR:
         StrToBoolOp(a, StrLT, a->poly.str.value, b->poly.str.value);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64: case BLN: case FUN:
         PromoteLT(a, b);
         break;
-    case ARR: case OBJ: case NUL: case REF: case BRK:
+
+    case ARR: case OBJ: case NUL: case REF: case BRK: case CNT:
         quit("less than (<) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1450,10 +1471,12 @@ BoolLTE(Elem a, Elem b)
     case STR:
         StrToBoolOp(a, StrLTE, a->poly.str.value, b->poly.str.value);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64: case BLN: case FUN:
         PromoteLTE(a, b);
         break;
-    case ARR: case OBJ: case NUL: case REF: case BRK:
+
+    case ARR: case OBJ: case NUL: case REF: case BRK: case CNT:
         quit("less than or equal to (<=) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1468,10 +1491,12 @@ BoolGT(Elem a, Elem b)
     case STR:
         StrToBoolOp(a, StrGT, a->poly.str.value, b->poly.str.value);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64: case BLN: case FUN:
         PromoteGT(a, b);
         break;
-    case ARR: case OBJ: case NUL: case REF: case BRK:
+
+    case ARR: case OBJ: case NUL: case REF: case BRK: case CNT:
         quit("greater than (>) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1486,10 +1511,12 @@ BoolGTE(Elem a, Elem b)
     case STR:
         StrToBoolOp(a, StrGTE, a->poly.str.value, b->poly.str.value);
         break;
+
     case I8: case U8: case I16: case U16: case I32: case U32: case I64: case U64: case F32: case F64: case BLN: case FUN:
         PromoteGTE(a, b);
         break;
-    case ARR: case OBJ: case NUL: case REF: case BRK:
+
+    case ARR: case OBJ: case NUL: case REF: case BRK: case CNT:
         quit("greater than or equal to (>=) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1777,7 +1804,11 @@ Write(Elem e, int tabs)
         break;
 
     case BRK:
-        quit("how did you manage to print a break statement?");
+        quit("how did you manage to print a `break` statement?");
+        break;
+
+    case CNT:
+        quit("honestly, you seriously managed to print a `continue` statement?");
         break;
     }
 }
@@ -1914,14 +1945,18 @@ While(deq_char* q, Elem* ret)
         if(e->poly.bln == true)
         {
             Brace(code.value, ret);
-            if((*ret)->type == BRK)
+            Type t = (*ret)->type;
+            if(t == BRK)
             {
-                // PREVENT BREAKING FUNCTION.
                 (*ret)->type = NUL;
                 done = true;
             }
             else
+            {
+                if(t == CNT)
+                    (*ret)->type = NUL;
                 Requeue(q, &Buffer);
+            }
         }
         else
             done = true;
@@ -1946,6 +1981,7 @@ For(deq_char* q, Elem* ret)
     {
         if(done)
             break;
+
         Insert(&k, *it.ref, memb->constant, true);
 
         str_clear(&Buffer);
@@ -1954,17 +1990,21 @@ For(deq_char* q, Elem* ret)
         Buffering = false;
         Brace(code.value, ret);
 
-        //if((*ret)->type == BRK)
-        //{
-        //    (*ret)->type = NUL;
-        //    done = true;
-        //}
-        //else
+        // BREAK AND CONTINUE.
+        if((*ret)->type == BRK)
+        {
+            (*ret)->type = NUL;
+            done = true;
+        }
+        else
+        if((*ret)->type == CNT)
+            (*ret)->type = NUL;
+
+        // THE LAST ITERATION DOES NOT REQUIRE A REQUEUE.
         if(index < elem->poly.arr.size - 1)
             Requeue(q, &Buffer);
 
         str_free(&code);
-
         str l = Local(k.value);
         Erase(&l);
         str_free(&l);
@@ -2049,26 +2089,21 @@ Block(deq_char* q)
             abort = true;
         }
         else
-        if(Equal(&s, "for"))
+        if(Equal(&s, "continue"))
         {
-            For(q, &ret);
-            if(ret->type != NUL)
-                abort = true;
+            Match(q, ';');
+            ret->type = CNT;
+            abort = true;
         }
+        else
+        if(Equal(&s, "for"))
+            For(q, &ret);
         else
         if(Equal(&s, "while"))
-        {
             While(q, &ret);
-            if(ret->type != NUL)
-                abort = true;
-        }
         else
         if(Equal(&s, "if"))
-        {
             IfChain(q, &ret);
-            if(ret->type != NUL)
-                abort = true;
-        }
         else
         {
             bool mut = Mutable(q, &s);
@@ -2090,6 +2125,8 @@ Block(deq_char* q)
             Match(q, ';');
         }
         str_free(&s);
+        if(ret->type != NUL)
+            abort = true;
         if(abort)
             break;
     }
@@ -2146,7 +2183,9 @@ Call(Memb* m, vec_str* args)
     Stack -= 1;
     deq_char_free(&q);
     if(ret->type == BRK)
-        quit("cannot break a function");
+        quit("`break` expected `while` loop or `for` loop");
+    if(ret->type == CNT)
+        quit("`continue` expected `while` loop or `for` loop");
     return ret;
 }
 

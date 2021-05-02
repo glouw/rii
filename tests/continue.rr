@@ -1,0 +1,19 @@
+Main()
+{
+    mut i := 10;
+    while(i > 0)
+    {
+        i -= 1;
+        continue;
+        i += 1;
+    }
+    arr := [1, 2, 3];
+    mut j := 3;
+    for(x : arr)
+    {
+        j -= 1;
+        continue;
+        j += 1;
+    }
+    ret i + j;
+}

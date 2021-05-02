@@ -20,6 +20,7 @@ test: all
 	./$(BIN) tests/fun.rr
 	./$(BIN) tests/if.rr
 	./$(BIN) tests/break.rr
+	./$(BIN) tests/continue.rr
 	./$(BIN) tests/argv.rr testing cmd params
 	./$(BIN) examples/fact.rr
 	@printf "\n>> ALLS WELL THAT ENDS WELL\n\n"
