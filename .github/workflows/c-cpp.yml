@@ -1,4 +1,4 @@
-name: BUILD / TEST / MEM CHECK / UB CHECK
+name: MAKE AND TEST
 
 on:
   push:
@@ -18,6 +18,10 @@ jobs:
         submodules: 'true'
         ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
 
-    - name: MAKE
+    - name: MAKE AND TEST CTL
+      run:
+        cd ctl; make LONG=1 SANITIZE=1
+
+    - name: MAKE AND TEST RR
       run:
         make test SANITIZE=1
