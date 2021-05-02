@@ -18,10 +18,10 @@ jobs:
         submodules: 'true'
         ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
 
-    - name: MAKE AND TEST CTL
+    - name: CTL
       run:
         cd ctl; make O3=1 LONG=1 SANITIZE=1
 
-    - name: MAKE AND TEST RR
+    - name: RR
       run:
         make SANITIZE=1
