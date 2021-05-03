@@ -30,3 +30,11 @@ Main()
 ```
 
 Roman II conforms to ANSI-C99 and is built with the C Template Library (CTL).
+
+## Build
+
+```
+git clone ssh://git@github.com/glouw/rr
+git submodule update --init --recursive
+make
+```
