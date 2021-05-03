@@ -1,0 +1,14 @@
+RET := 2;
+
+A()
+{
+    RET -= 1;
+    ret 1; # SO THE EMPTY ADDITION BELOW WORKS.
+}
+
+Main()
+{
+    A() + 1;
+    1 + A();
+    ret RET;
+}

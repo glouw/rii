@@ -1034,13 +1034,15 @@ Params(deq_char* q, bool declaring)
 static void
 Fun(deq_char* q, str* l)
 {
+    char* line = LineStr();
     str label = str_copy(l);
     vec_str p = Params(q, true);
-    vec_str_push_back(&p, str_init(LineStr()));
+    vec_str_push_back(&p, str_init(line));
     vec_str_push_back(&p, label);
     str code = ReadBlock(q);
     vec_str_push_back(&p, code);
     Insert(&label, Elem_init(FUN, (Poly) { .fun = p }));
+    free(line);
 }
 
 static Elem*
@@ -1052,11 +1054,55 @@ Deref(Elem elem)
     return other;
 }
 
+static Elem
+Expression(deq_char*);
+
+bool
+IsIntegral(Type t)
+{
+    return t == U8 || t == U16 || t == U32 || t == U64
+        || t == I8 || t == I16 || t == I32 || t == I64;
+}
+
 static Elem*
-Resolve(str* s)
+Resolve(deq_char* q, str* s)
 {
     Elem* elem = &Exists(s)->key.elem;
-    return ((*elem)->type == REF) ? Deref(*elem) : elem;
+    Elem* deref = ((*elem)->type == REF) ? Deref(*elem) : elem;
+    while(Next(q) == '[')
+    {
+        Match(q, '[');
+        Elem e = Expression(q);
+        if(IsIntegral(e->type))
+        {
+            if((*deref)->type != ARR)
+                quit("integral type expected for [] (array) lookup");
+            Cast(e, U64);
+            if(e->poly.u64 >= (*deref)->poly.arr.size)
+                quit("element %lu out of range (array size was %lu)", e->poly.u64, (*deref)->poly.arr.size);
+            deref = deq_Elem_at(&(*deref)->poly.arr, e->poly.u64);
+        }
+        else
+        if(e->type == STR)
+        {
+            if((*deref)->type != OBJ)
+                quit("string type expected for {} (object) lookup");
+            set_Memb_node* node = set_Memb_find(&(*deref)->poly.obj, (Memb) { .str = e->poly.str });
+            if(node)
+                deref = &node->key.elem;
+            else // TODO TEST THIS.
+            {
+                Elem* somewhere = malloc(sizeof(*somewhere));
+                *somewhere = Elem_null();
+                deref = somewhere;
+            }
+        }
+        else
+            quit("type `%s` may not be use for lookup", Types[e->type]);
+        Match(q, ']');
+        Elem_free(&e);
+    }
+    return deref;
 }
 
 static Elem
@@ -1066,7 +1112,7 @@ static Elem
 Ident(deq_char* q)
 {
     str s = Read(q, IsIdent);
-    Elem* m = Resolve(&s);
+    Elem* m = Resolve(q, &s);
     Elem e;
     if(Next(q) == '(')
     {
@@ -1145,9 +1191,6 @@ Value(deq_char* q)
     return Elem_init(t, p);
 }
 
-static Elem
-Expression(deq_char*);
-
 static deq_Elem
 Array(deq_char* q)
 {
@@ -1161,7 +1204,7 @@ Array(deq_char* q)
         {
             Match(q, ',');
             if(Next(q) == ']')
-                quit("trailing semicolon `,` found within `[]`");
+                quit("trailing semicolon `,` found on last element within `[]`");
         }
     }
     Match(q, ']');
@@ -1186,7 +1229,7 @@ Object(deq_char* q)
         {
             Match(q, ',');
             if(Next(q) == '}')
-                quit("trailing semicolon `,` found within `{}`");
+                quit("trailing semicolon `,` found on last element within `{}`");
         }
     }
     Match(q, '}');
@@ -1466,7 +1509,15 @@ BoolET(Elem a, Elem b)
         FunToBool(a, b);
         break;
 
-    case NUL: case REF: case BRK: case CNT:
+    case NUL:
+        if(a->type == NUL && b->type == NUL)
+        {
+            a->type = BLN;
+            a->poly.bln = true;
+        }
+        break;
+
+    case REF: case BRK: case CNT:
         quit("equals (==) not supported for types `%s` and `%s`", Types[a->type], Types[b->type]); 
     }
     return a->poly.bln;
@@ -1850,71 +1901,6 @@ Print(Elem e)
     putchar('\n');
 }
 
-static void
-Define(deq_char* q, str* n)
-{
-    Match(q, ':');
-    Match(q, '=');
-    if(Find(n))
-        quit("`%s` already defined", n->value);
-    Elem e = Expression(q);
-    Insert(n, e);
-}
-
-static void
-Update(deq_char* q, str* n)
-{
-    Match(q, '=');
-    Elem* m = Resolve(n);
-    Elem e = Expression(q);
-    Elem_free(m);
-    *m = e;
-}
-
-static void
-AddEqual(deq_char* q, str* n)
-{
-    Match(q, '+');
-    Match(q, '=');
-    Elem* m = Resolve(n);
-    Elem e = Expression(q);
-    Add(*m, e);
-    Elem_free(&e);
-}
-
-static void
-SubEqual(deq_char* q, str* n)
-{
-    Match(q, '-');
-    Match(q, '=');
-    Elem* m = Resolve(n);
-    Elem e = Expression(q);
-    Sub(*m, e);
-    Elem_free(&e);
-}
-
-static void
-MulEqual(deq_char* q, str* n)
-{
-    Match(q, '*');
-    Match(q, '=');
-    Elem* m = Resolve(n);
-    Elem e = Expression(q);
-    Mul(*m, e);
-    Elem_free(&e);
-}
-
-static void
-DivEqual(deq_char* q, str* n)
-{
-    Match(q, '/');
-    Match(q, '=');
-    Elem* m = Resolve(n);
-    Elem e = Expression(q);
-    Div(*m, e);
-    Elem_free(&e);
-}
-
 static Elem
 Cond(deq_char* q)
 {
@@ -2065,6 +2051,132 @@ IfChain(deq_char* q, Elem* ret)
     }
 }
 
+static void
+Define(deq_char* q, str* s)
+{
+    Match(q, ':');
+    Match(q, '=');
+    if(Find(s))
+        quit("`%s` already defined", s->value);
+    Elem e = Expression(q);
+    Insert(s, e);
+}
+
+static void
+Update(deq_char* q, Elem* m)
+{
+    Match(q, '=');
+    Elem e = Expression(q);
+    Elem_free(m);
+    *m = e;
+}
+
+static void
+AddEqual(deq_char* q, Elem* m)
+{
+    Match(q, '+');
+    Match(q, '=');
+    Elem e = Expression(q);
+    Add(*m, e);
+    Elem_free(&e);
+}
+
+static void
+SubEqual(deq_char* q, Elem* m)
+{
+    Match(q, '-');
+    Match(q, '=');
+    Elem e = Expression(q);
+    Sub(*m, e);
+    Elem_free(&e);
+}
+
+static void
+MulEqual(deq_char* q, Elem* m)
+{
+    Match(q, '*');
+    Match(q, '=');
+    Elem e = Expression(q);
+    Mul(*m, e);
+    Elem_free(&e);
+}
+
+static void
+DivEqual(deq_char* q, Elem* m)
+{
+    Match(q, '/');
+    Match(q, '=');
+    Elem e = Expression(q);
+    Div(*m, e);
+    Elem_free(&e);
+}
+
+static void
+EmptyExpression(deq_char* q)
+{
+    Elem e = Expression(q);
+    Elem_free(&e);
+}
+
+static void
+Modify(deq_char* q, str* s)
+{
+    char c = Next(q);
+    if(c == '(') // a() + 1
+    {
+        Requeue(q, s);
+        EmptyExpression(q);
+    }
+    else
+    if(c == ':') // a := 1
+        Define(q, s);
+    else
+    if(c == '[')
+    {
+        Elem* m = Resolve(q, s);
+        char n = Next(q);
+        if(n == '=') // a[X] = 1
+            Update(q, m);
+        else
+        if(n == '+') // a[X] += 1
+            AddEqual(q, m);
+        else
+        if(n == '-') // a[X] -= 1
+            SubEqual(q, m);
+        else
+        if(n == '*') // a[X] *= 1
+            MulEqual(q, m);
+        else
+        if(n == '/') // a[X] /= 1
+            DivEqual(q, m);
+        else
+        if(n == ';') // a[X]
+            quit("lookup expected modification");
+        else
+            quit("unknown operator on lookup");
+    }
+    else
+    if(c == '=') // a = 1
+        Update(q, Resolve(q, s));
+    else
+    if(c == '+') // a += 1
+        AddEqual(q, Resolve(q, s));
+    else
+    if(c == '-') // a -= 1
+        SubEqual(q, Resolve(q, s));
+    else
+    if(c == '*') // a *= 1
+        MulEqual(q, Resolve(q, s));
+    else
+    if(c == '/') // a /= 1
+        DivEqual(q, Resolve(q, s));
+    else
+    if(c == ';') // a[X]
+        quit("ident expected modification");
+    else
+        quit("unknown operator on ident");
+}
+
 static Elem
 Block(deq_char* q)
 {
@@ -2074,54 +2186,49 @@ Block(deq_char* q)
     bool abort = false;
     while(Next(q) != '}')
     {
-        str s = Read(q, IsIdent);
+        str s = IsDigit(Next(q))
+            ? str_init("")
+            : Read(q, IsIdent);
+        // ret <expression>;
         if(Equal(&s, "ret"))
         {
             Elem_free(&ret);
             ret = Expression(q);
-            Match(q, ';');
             abort = true;
+            Match(q, ';');
         }
-        else
+        else // break;
         if(Equal(&s, "break"))
         {
-            Match(q, ';');
             ret->type = BRK;
             abort = true;
+            Match(q, ';');
         }
-        else
+        else // continue;
         if(Equal(&s, "continue"))
         {
-            Match(q, ';');
             ret->type = CNT;
             abort = true;
+            Match(q, ';');
         }
-        else
+        else // 1 + a();
+        if(s.size == 0)
+        {
+            EmptyExpression(q);
+            Match(q, ';');
+        }
+        else // for(k [, v] : arr) {}
         if(Equal(&s, "for"))
             For(q, &ret);
-        else
+        else // while(<expression>)
         if(Equal(&s, "while"))
             While(q, &ret);
-        else
+        else // if(<expression>) {}
         if(Equal(&s, "if"))
             IfChain(q, &ret);
-        else
+        else // a<,[X]> <+,-,/,*..etc>= <expression>;
         {
-            char c = Next(q);
-            switch(c)
-            {
-            case ':': Define(q, &s); break;
-            case '=': Update(q, &s); break;
-            case '+': AddEqual(q, &s); break;
-            case '-': SubEqual(q, &s); break;
-            case '*': MulEqual(q, &s); break;
-            case '/': DivEqual(q, &s); break;
-            default:
-                Requeue(q, &s);
-                Elem e = Expression(q);
-                Elem_free(&e);
-                break;
-            }
+            Modify(q, &s);
             Match(q, ';');
         }
         str_free(&s);
@@ -2220,6 +2327,8 @@ Command(int argc, char** argv)
 {
     str s = str_init("");
     str_append(&s, "[");
+    //  0       1   2     3        N
+    // rr file.rr arg0 arg1 ... argN
     for(int i = 2; i < argc; i++)
     {
         str_append(&s, "\"");

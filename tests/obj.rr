@@ -1,0 +1,16 @@
+Main()
+{
+    key := "key";
+    value := 42;
+    a := {
+        key : value
+    };
+    if(a[key] == value)
+    {
+        ret 0;
+    }
+    else
+    {
+        ret 1;
+    }
+}

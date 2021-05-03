@@ -38,10 +38,17 @@ test: all
 	./$(BIN) $(TESTS)/if.rr
 	./$(BIN) $(TESTS)/break.rr
 	./$(BIN) $(TESTS)/continue.rr
+	./$(BIN) $(TESTS)/arr.rr
+	./$(BIN) $(TESTS)/2darr.rr
+	./$(BIN) $(TESTS)/expr.rr
+	./$(BIN) $(TESTS)/obj.rr
+	./$(BIN) $(TESTS)/obj-no-find.rr
+	./$(BIN) $(TESTS)/obj-arr-mix.rr
 	./$(BIN) $(TESTS)/argv.rr testing cmd params
 	$(call bad,tests/continue-bad.rr)
 	$(call bad,tests/break-bad.rr)
 	$(call bad,tests/args-bad.rr)
+	$(call bad,tests/arr-oob-bad.rr)
 	@echo ">> PASS"
 
 all:
