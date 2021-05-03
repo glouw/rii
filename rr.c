@@ -1759,9 +1759,7 @@ Expression(deq_char* q)
     Elem a = Term(q);
     bool done = false;
     while(!done)
-    {
-        char n = Next(q);
-        switch(n)
+        switch(Next(q))
         {
         case '+': AddWith(q, a); break;
         case '-': SubWith(q, a); break;
@@ -1771,7 +1769,6 @@ Expression(deq_char* q)
         case '<': LessWith(q, a); break;
         default: done = true; break;
         }
-    }
     return a;
 }
 
