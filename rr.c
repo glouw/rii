@@ -949,24 +949,22 @@ Local(char* s)
 }
 
 static set_Memb_node*
+By(str* s, str Region(char*))
+{
+    str ss = Region(s->value);
+    set_Memb_node* f = set_Memb_find(&db, (Memb) { .str = ss });
+    str_free(&ss);
+    return f;
+}
+
+static set_Memb_node*
 Find(str* s)
 {
-    // FIRST, FIND LOCAL.
-    str l = Local(s->value);
-    set_Memb_node* local = set_Memb_find(&db, (Memb) { .str = l });
-    str_free(&l);
-    if(local)
-        return local;
-
-    // FAILING THAT, FIND GLOBAL.
-    str g = Global(s->value);
-    set_Memb_node* globa = set_Memb_find(&db, (Memb) { .str = g });
-    str_free(&g);
-    if(globa)
-        return globa;
-
-    // FAILING EITHER, TESTS AGAINST NULL ARE HANDY.
-    return NULL;
+    set_Memb_node* l;
+    set_Memb_node* g;
+    return (l = By(s, Local))  ? l // FIRST FIND LOCAL.
+         : (g = By(s, Global)) ? g // FAILING, FIND GLOBAL.
+         : NULL; // OTHERWISE, NULL CAN BE TESTED AGAINST.
 }
 
 static void
