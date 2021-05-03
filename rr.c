@@ -52,6 +52,8 @@ static Elem Elem_copy(Elem*);
 #define T Elem
 #include <deq.h>
 
+static Elem NOTHING;
+
 typedef struct
 {
     str str;
@@ -1086,11 +1088,7 @@ LookupObj(Elem* deref, Elem e)
     if(node)
         return &node->key.elem;
     else
-    {
-        Elem* null = malloc(sizeof(*null));
-        *null = Elem_null();
-        return null;
-    }
+        return &NOTHING;
 }
 
 static Elem*
@@ -2364,6 +2362,7 @@ Command(int argc, char** argv)
 static void
 Setup(void)
 {
+    NOTHING = Elem_null();
     LINE = 1;
     BUFFER = str_init("");
     BUFFERING = false;
@@ -2380,6 +2379,7 @@ Setup(void)
 static void
 Teardown(void)
 {
+    Elem_free(&NOTHING);
     str_free(&BUFFER);
     set_Memb_free(&db);
 }
