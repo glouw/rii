@@ -1046,9 +1046,9 @@ Fun(deq_char* q, str* l)
 }
 
 static Elem*
-Deref(Elem elem)
+Deref(Elem* elem)
 {
-    Elem* other = elem->poly.ref;
+    Elem* other = (*elem)->poly.ref;
     while((*other)->type == REF)
         other = (*other)->poly.ref;
     return other;
@@ -1057,7 +1057,7 @@ Deref(Elem elem)
 static Elem
 Expression(deq_char*);
 
-bool
+static bool
 IsIntegral(Type t)
 {
     return t == U8 || t == U16 || t == U32 || t == U64
@@ -1065,44 +1065,60 @@ IsIntegral(Type t)
 }
 
 static Elem*
-Resolve(deq_char* q, str* s)
+LookupArr(Elem* deref, Elem e)
 {
-    Elem* elem = &Exists(s)->key.elem;
-    Elem* deref = ((*elem)->type == REF) ? Deref(*elem) : elem;
+    if((*deref)->type != ARR)
+        quit("integral type expected for [] (array) lookup");
+    Cast(e, U64);
+    deq_Elem* arr = &(*deref)->poly.arr;
+    if(e->poly.u64 >= arr->size)
+        quit("element %lu out of range (array size was %lu)", e->poly.u64, arr->size);
+    return deq_Elem_at(arr, e->poly.u64);
+}
+
+static Elem*
+LookupObj(Elem* deref, Elem e)
+{
+    if((*deref)->type != OBJ)
+        quit("string type expected for {} (object) lookup");
+    set_Memb* obj = &(*deref)->poly.obj;
+    set_Memb_node* node = set_Memb_find(obj , (Memb) { .str = e->poly.str });
+    if(node)
+        return &node->key.elem;
+    else
+    {
+        Elem* null = malloc(sizeof(*null));
+        *null = Elem_null();
+        return null;
+    }
+}
+
+static Elem*
+Lookup(deq_char* q, Elem* deref)
+{
     while(Next(q) == '[')
     {
         Match(q, '[');
         Elem e = Expression(q);
         if(IsIntegral(e->type))
-        {
-            if((*deref)->type != ARR)
-                quit("integral type expected for [] (array) lookup");
-            Cast(e, U64);
-            if(e->poly.u64 >= (*deref)->poly.arr.size)
-                quit("element %lu out of range (array size was %lu)", e->poly.u64, (*deref)->poly.arr.size);
-            deref = deq_Elem_at(&(*deref)->poly.arr, e->poly.u64);
-        }
+            deref = LookupArr(deref, e);
         else
         if(e->type == STR)
-        {
-            if((*deref)->type != OBJ)
-                quit("string type expected for {} (object) lookup");
-            set_Memb_node* node = set_Memb_find(&(*deref)->poly.obj, (Memb) { .str = e->poly.str });
-            if(node)
-                deref = &node->key.elem;
-            else // TODO TEST THIS.
-            {
-                Elem* somewhere = malloc(sizeof(*somewhere));
-                *somewhere = Elem_null();
-                deref = somewhere;
-            }
-        }
+            deref = LookupObj(deref, e);
         else
-            quit("type `%s` may not be use for lookup", Types[e->type]);
+            quit("type `%s` may not be used for lookup", Types[e->type]);
         Match(q, ']');
         Elem_free(&e);
     }
     return deref;
+}
+
+static Elem*
+Resolve(deq_char* q, str* s)
+{
+    Elem* elem = &Exists(s)->key.elem;
+    Elem* deref = ((*elem)->type == REF) ? Deref(elem) : elem;
+    return Lookup(q, deref);
 }
 
 static Elem
